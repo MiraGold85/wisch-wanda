@@ -33,6 +33,7 @@ export function freshState(today = dateKey()) {
     goal: { title: 'Pizza-Abend für alle', points: 1000, since: today },
     waste: null, // Abfallkalender { name, events: [{ d, t }] }
     sync: null, // { householdId, inviteCode, name }
+    push: null, // Benachrichtigungen auf diesem Handy { endpoint, remindHour, waste }
     outbox: [],
   };
 }
@@ -43,6 +44,7 @@ export function migrate(state) {
   state.sync ??= null;
   state.history ??= [];
   state.waste ??= null;
+  state.push ??= null;
   // Vor Einführung der Markierung geladene Kalender sicherheitshalber als „noch hochzuladen“ behandeln.
   if (state.waste && state.sync && state.wasteUnsynced === undefined) state.wasteUnsynced = true;
   return state;

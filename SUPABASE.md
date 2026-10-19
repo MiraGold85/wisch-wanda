@@ -51,6 +51,36 @@ Wurde Schritt 3 vor dem Oktober-Update mit dem Abfallkalender ausgeführt, fehlt
 Im **SQL Editor** einmal den Inhalt von [`supabase/002_abfallkalender.sql`](supabase/002_abfallkalender.sql)
 einfügen und **„Run“** klicken. Mehrfaches Ausführen schadet nicht.
 
+## Push-Benachrichtigungen einrichten (ca. 5 Minuten)
+
+Damit Wanda auch bei geschlossener App Bescheid gibt (neue Aufgabe, erledigt, Müll am Vorabend,
+tägliche Erinnerung), braucht es einen kleinen Push-Dienst auf Supabase. Geheimschlüssel musst du
+dafür **nicht** kopieren – die erzeugt der Dienst selbst.
+
+### A. Datenbank vorbereiten
+
+1. Die Datei [`supabase/003_push.sql`](supabase/003_push.sql) öffnen → **„Copy raw file“**.
+2. Im Supabase **SQL Editor** eine neue Abfrage öffnen, einfügen, **„Run“**.
+   Falls Supabase nachfragt, ob die Abfrage ausgeführt werden soll: bestätigen.
+
+### B. Push-Dienst anlegen
+
+1. Die Datei [`supabase/functions/wanda-push/index.ts`](supabase/functions/wanda-push/index.ts) öffnen → **„Copy raw file“**.
+2. In Supabase links auf **„Edge Functions“** klicken → **„Deploy a new function“** → **„Via Editor“**.
+3. Den vorhandenen Beispiel-Code komplett löschen und den kopierten Code einfügen.
+4. Unten den Namen auf **`wanda-push`** setzen (genau so, klein und mit Bindestrich).
+5. **„Deploy function“** klicken und kurz warten.
+6. Die neue Funktion öffnen → **„Details“** (bzw. Einstellungen) → **„Verify JWT“ / „Enforce JWT Verification“ ausschalten** → speichern.
+   Der Dienst prüft stattdessen selbst, ob ein Aufruf von eurer Datenbank kommt.
+
+### C. Auf jedem Handy einschalten
+
+In Wanda: **Einstellungen → 🔔 Benachrichtigungen → „Benachrichtigungen einschalten“**, erlauben,
+dann **„Test senden“**. Kommt „🧽 Wanda sagt Hallo!“, ist alles richtig eingerichtet.
+
+> 📱 **iPhone:** Benachrichtigungen gehen nur, wenn Wanda über Safari → Teilen → „Zum Home-Bildschirm“
+> hinzugefügt wurde und von dort geöffnet wird (iOS 16.4 oder neuer).
+
 ## Gut zu wissen
 
 - Kostenlose Supabase-Projekte schlafen ein, wenn eine Woche lang niemand die App benutzt.

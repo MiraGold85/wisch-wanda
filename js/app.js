@@ -9,6 +9,7 @@ import {
 } from './store.js';
 import { importWaste, importFromSchichtplaner, wasteDue, wasteDone, nextPickups, wasteIcon, WASTE_POINTS } from './waste.js';
 import * as sync from './sync.js';
+import { pushSupport, enablePush, updatePush, disablePush, testPush } from './push.js';
 
 let state = load();
 let tab = 'heute';
@@ -530,6 +531,45 @@ function viewFamily() {
 
 // ---------- Ansicht: Einstellungen ----------
 
+let pushBusy = false;
+
+function pushSettings() {
+  if (!state.sync) return '';
+  const support = pushSupport();
+  const p = state.push;
+  let body;
+  if (support === 'ios-install') {
+    body = '<p class="hint">Auf dem iPhone gehen Benachrichtigungen nur, wenn Wanda auf dem Home-Bildschirm liegt: in Safari auf <b>Teilen → „Zum Home-Bildschirm“</b>, dann Wanda von dort öffnen und hier einschalten.</p>';
+  } else if (support === 'unsupported') {
+    body = '<p class="hint">Dieser Browser kann leider keine Benachrichtigungen. Auf Android am besten Chrome verwenden.</p>';
+  } else if (support === 'denied') {
+    body = '<p class="hint">Benachrichtigungen sind für Wanda blockiert. Erlauben kannst du sie in den Handy-Einstellungen (bei Android: lange auf das Wanda-Symbol drücken → App-Info → Benachrichtigungen).</p>';
+  } else if (!p) {
+    body = `
+      <p class="hint">Wanda meldet sich, wenn dir jemand eine Aufgabe schickt, wenn deine zugeschickte Aufgabe erledigt ist und am Vorabend der Müllabfuhr – auch wenn die App zu ist.</p>
+      <button class="btn" data-action="enable-push" ${pushBusy ? 'disabled' : ''}>${pushBusy ? 'Einen Moment …' : '🔔 Benachrichtigungen einschalten'}</button>`;
+  } else {
+    const hours = Array.from({ length: 15 }, (_, i) => i + 7);
+    body = `
+      <p class="push-on">✅ Eingeschaltet für ${who(state.currentMember)}</p>
+      <ul class="push-list">
+        <li>📨 Neue und erledigte zugeschickte Aufgaben</li>
+        <li><label><input type="checkbox" id="push-waste" ${p.waste ? 'checked' : ''}> 🗑️ Müll-Erinnerung um 18 Uhr am Vorabend</label></li>
+        <li><label>☀️ Tägliche Erinnerung an die Wanda-Stunde
+          <select id="push-hour">
+            <option value="" ${p.remindHour == null ? 'selected' : ''}>aus</option>
+            ${hours.map((h) => `<option value="${h}" ${p.remindHour === h ? 'selected' : ''}>um ${h} Uhr</option>`).join('')}
+          </select></label>
+          <small>kommt nur, wenn du an dem Tag noch nichts erledigt hast</small></li>
+      </ul>
+      <div class="row wrap">
+        <button class="btn ghost" data-action="test-push">Test senden</button>
+        <button class="btn danger" data-action="disable-push">Ausschalten</button>
+      </div>`;
+  }
+  return section({ icon: '🔔', title: 'Benachrichtigungen', meta: 'gilt für dieses Handy', body });
+}
+
 let wasteMessage = '';
 
 function wasteSettings() {
@@ -618,6 +658,7 @@ function viewSettings() {
           <button class="btn" data-action="add-task">Hinzufügen</button>
         </div>`,
     })}
+    ${pushSettings()}
     ${wasteSettings()}
     ${section({
       icon: '💾', title: 'Sicherung',
@@ -941,6 +982,12 @@ async function share() {
   }
 }
 
+// Wer gerade „ich“ ist, bekommt die Benachrichtigungen auf diesem Handy.
+function pushFollowMember() {
+  if (!state.push || !state.sync) return;
+  updatePush(me().id, state.push).catch((e) => console.warn('Wisch-Wanda: Push-Person nicht aktualisiert', e));
+}
+
 function joinCodeFromUrl() {
   const m = location.hash.match(/join=([A-Za-z0-9-]+)/);
   return m ? m[1].replace(/-/g, '').toUpperCase() : null;
@@ -974,6 +1021,7 @@ document.addEventListener('click', (ev) => {
   if (d.pick) {
     state.currentMember = d.pick;
     save(state);
+    pushFollowMember();
     toast(`Hallo ${member(d.pick).name}! ${member(d.pick).emoji}`);
     renderOverlay();
     return render();
@@ -991,6 +1039,7 @@ document.addEventListener('click', (ev) => {
   if (d.member) {
     state.currentMember = d.member;
     save(state);
+    pushFollowMember();
     toast(`Hallo ${member(d.member).name}! ${member(d.member).emoji}`);
     return render();
   }
@@ -1044,7 +1093,10 @@ document.addEventListener('click', (ev) => {
       return share();
     case 'leave':
       if (!confirm('Dieses Handy von der Familie abmelden? Die Familie und ihre Daten bleiben erhalten – du kannst jederzeit mit dem Code wieder beitreten.')) return;
-      return sync.leaveFamily().then(() => {
+      return (state.push ? disablePush(state.push.endpoint).catch(() => {}) : Promise.resolve()).then(() => {
+        state.push = null;
+        return sync.leaveFamily();
+      }).then(() => {
         toast('Abgemeldet. Wanda läuft jetzt nur auf diesem Handy.');
         render();
       });
@@ -1082,6 +1134,34 @@ document.addEventListener('click', (ev) => {
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       return;
     }
+    case 'enable-push':
+      if (pushBusy) return;
+      pushBusy = true;
+      render();
+      return enablePush(me().id, { waste: true, remindHour: null })
+        .then((p) => {
+          state.push = p;
+          save(state);
+          toast('🔔 Benachrichtigungen sind an!');
+        })
+        .catch((e) => toast(e.code === 'service'
+          ? 'Der Push-Dienst ist noch nicht eingerichtet – siehe SUPABASE.md, Abschnitt „Push-Benachrichtigungen“.'
+          : e.code === 'denied' ? 'Ohne Erlaubnis kann Wanda keine Benachrichtigungen schicken.' : `Das hat nicht geklappt: ${e.message}`, 6000))
+        .finally(() => {
+          pushBusy = false;
+          render();
+        });
+    case 'disable-push':
+      return disablePush(state.push?.endpoint).finally(() => {
+        state.push = null;
+        save(state);
+        toast('Benachrichtigungen sind aus.');
+        render();
+      });
+    case 'test-push':
+      return testPush(state.push.endpoint)
+        .then(() => toast('Test unterwegs – gleich sollte eine Benachrichtigung kommen. 📬', 4000))
+        .catch((e) => toast(`Test hat nicht geklappt: ${e.message}`, 5000));
     case 'remove-waste':
       if (!confirm(`Abfallkalender „${state.waste.name}“ entfernen?`)) return;
       setWaste(state, null);
@@ -1130,6 +1210,17 @@ document.addEventListener('change', (ev) => {
     if (d.goal === 'title') state.goal.title = el.value.trim() || 'Familienbelohnung';
     else state.goal.points = Math.max(50, +el.value || 1000);
     saveSettings(state);
+  } else if (el.id === 'push-waste' || el.id === 'push-hour') {
+    const settings = { ...state.push };
+    if (el.id === 'push-waste') settings.waste = el.checked;
+    else settings.remindHour = el.value === '' ? null : +el.value;
+    updatePush(me().id, settings)
+      .then((p) => {
+        state.push = p;
+        save(state);
+        toast('Gespeichert ✓');
+      })
+      .catch((e) => toast(`Konnte nicht gespeichert werden: ${e.message}`, 5000));
   } else if (el.id === 'import') {
     importBackup(el.files[0]);
     el.value = '';
@@ -1231,6 +1322,7 @@ document.addEventListener('submit', async (ev) => {
     saveMember(state, m);
     state.currentMember = m.id;
     save(state);
+    pushFollowMember();
     renderOverlay();
     return render();
   }
@@ -1244,6 +1336,10 @@ document.addEventListener('submit', async (ev) => {
     renderOverlay();
     try {
       if (isJoin) {
+        if (state.push) {
+          await disablePush(state.push.endpoint).catch(() => {});
+          state.push = null;
+        }
         await sync.joinFamily(sheet.code);
         state.onboarded = true;
         state.currentMember = null; // „Wer bist du?“ fragen

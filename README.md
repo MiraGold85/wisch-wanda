@@ -26,6 +26,7 @@ jede Woche ein Raum gründlich – mit Punkten, Serien und einem gemeinsamen Fam
 - **Aufgaben zuschicken:** aus dem Katalog oder frei formuliert, mit Termin und Nachricht. Die Empfängerin sieht sie unter „Für dich“.
 - **Live:** Erledigungen, neue Aufgaben und Einstellungen erscheinen sofort auf allen Handys.
 - **Offline-fest:** Ohne Netz wird weiter abgehakt; Änderungen werden nachgereicht, sobald wieder Verbindung besteht.
+- **Push-Benachrichtigungen:** neue und erledigte Aufgaben, Müll-Erinnerung um 18 Uhr am Vorabend und eine wählbare tägliche Erinnerung – auch bei geschlossener App (Push-Dienst in `supabase/functions/wanda-push`).
 
 Einrichtung: siehe [SUPABASE.md](SUPABASE.md). Ohne Einrichtung läuft die App rein lokal.
 
@@ -44,5 +45,5 @@ und iPhone (Safari → Teilen → „Zum Home-Bildschirm“) installieren.
 
 - [x] **Stufe 1:** Tagesplan, Rotation, Raum-Timer, Aufgabenkatalog, Punkte, Serien (Daten lokal auf dem Gerät)
 - [x] **Stufe 2:** Familien-Sync (Einladungslink, Aufgaben zuschicken, Live-Aktualisierung)
-- [ ] **Stufe 2b:** Push-Benachrichtigungen, auch wenn die App geschlossen ist
+- [x] **Stufe 2b:** Push-Benachrichtigungen, auch wenn die App geschlossen ist
 - [ ] **Stufe 3:** Belohnungsshop, Vorher/Nachher-Fotos, Wochenstatistik

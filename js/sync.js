@@ -449,5 +449,25 @@ export async function leaveFamily() {
   setStatus('local');
 }
 
+// ---------- Push-Benachrichtigungen ----------
+
+export const pushFunctionUrl = () => `${SUPABASE_URL}/functions/v1/wanda-push`;
+export const pushHeaders = () => ({ apikey: SUPABASE_KEY, 'Content-Type': 'application/json' });
+
+export async function savePushSubscription(row) {
+  await ensureSession();
+  const c = await getClient();
+  const { error } = await c.from('push_subscriptions')
+    .upsert({ ...row, household_id: hid(), updated_at: new Date().toISOString() }, { onConflict: 'endpoint' });
+  if (error) throw fail(error);
+}
+
+export async function deletePushSubscription(endpoint) {
+  await ensureSession();
+  const c = await getClient();
+  const { error } = await c.from('push_subscriptions').delete().eq('endpoint', endpoint);
+  if (error) throw fail(error);
+}
+
 // Für Tests: Realtime-Ereignis simulieren.
 export const _onRemote = onRemote;
