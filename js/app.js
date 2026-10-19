@@ -5,8 +5,9 @@ import {
 import {
   load, save, freshState, migrate, roomName, roomEmoji, planFor, doneEntry, toggleTask, memberPoints, familyPoints,
   effectiveTasks, setPusher, newId, addAssignment, deleteAssignment, toggleAssignment, assignmentTitle, assignmentPoints,
-  saveMember, removeMember, saveTask, removeTask, saveSettings,
+  saveMember, removeMember, saveTask, removeTask, saveSettings, setWaste, toggleWaste,
 } from './store.js';
+import { importWaste, wasteDue, wasteDone, nextPickups, wasteIcon, WASTE_POINTS } from './waste.js';
 import * as sync from './sync.js';
 
 let state = load();
@@ -134,6 +135,16 @@ function complete(taskId, ev) {
   if (timer) renderTimer();
 }
 
+function completeWaste(key, ev) {
+  const e = state.waste?.events.find((x) => `${x.d}|${x.t}` === key);
+  if (!e) return;
+  const done = wasteDone(state.history, e);
+  if (done && done.member !== me().id && !confirm(`${member(done.member)?.name ?? 'Jemand'} hat „${e.t}“ schon rausgestellt. Wirklich rückgängig machen?`)) return;
+  const entry = toggleWaste(state, e, today(), me().id);
+  if (entry) celebrate(entry, false, ev);
+  render();
+}
+
 function completeAssignment(id, ev) {
   const a = state.assignments.find((x) => x.id === id);
   if (!a) return;
@@ -218,6 +229,33 @@ function assignRow(a, opts = {}) {
   return `<div class="task-wrap">${check}<button class="send-btn" data-unassign="${esc(a.id)}" aria-label="Zurückziehen" title="Zurückziehen">✕</button></div>`;
 }
 
+// Tonnen von heute nur bis mittags zeigen – danach ist die Abfuhr meist durch.
+function wasteNow() {
+  const k = today();
+  const morning = new Date().getHours() < 12;
+  return wasteDue(state.waste, k).filter((e) => !e.today || morning || wasteDone(state.history, e)?.date === k);
+}
+
+function wasteRow(e) {
+  const done = wasteDone(state.history, e);
+  const sent = !done && state.assignments.find((a) => !a.taskId && !a.doneAt && a.title === e.title);
+  const sub = done
+    ? `erledigt von ${who(done.member)}`
+    : [e.today ? '<span class="late">heute ist Abholung – schnell noch raus!</span>' : 'morgen ist Abholung · heute Abend rausstellen',
+      sent ? `📨 an ${who(sent.to)}` : ''].filter(Boolean).join(' · ');
+  const row = `
+    <button class="task ${done ? 'done' : ''}" data-waste="${esc(`${e.d}|${e.t}`)}">
+      <span class="check" aria-hidden="true">${done ? '✓' : ''}</span>
+      <span class="task-body">
+        <span class="task-name">${e.icon} ${esc(e.title)}</span>
+        <span class="task-sub">${sub}</span>
+      </span>
+      <span class="pts">+${WASTE_POINTS}</span>
+    </button>`;
+  if (done || sent || state.members.length < 2) return row;
+  return `<div class="task-wrap">${row}<button class="send-btn" data-send-waste="${esc(`${e.d}|${e.t}`)}" aria-label="Jemandem zuschicken" title="Jemandem zuschicken">📨</button></div>`;
+}
+
 function section({ icon, title, meta, body, extra = '', cls = '' }) {
   return `
     <section class="card ${cls}">
@@ -249,14 +287,26 @@ function myAssignments() {
     .sort((a, b) => !!a.doneAt - !!b.doneAt || (a.due || '9999').localeCompare(b.due || '9999'));
 }
 
+function nextBinChip() {
+  const k = today();
+  const next = nextPickups(state.waste, addDays(k, 1), 12);
+  if (!next.length) return '';
+  const day = next[0].d;
+  const icons = [...new Set(next.filter((e) => e.d === day).map((e) => wasteIcon(e.t)))].join('');
+  const when = day === addDays(k, 1) ? 'morgen' : shortDate(day);
+  return `<span class="chip" title="Nächste Abholung">${icons} ${when}</span>`;
+}
+
 function viewToday() {
   const key = today();
   const full = planFor(state, key);
   const plan = isQuick() ? quickPlan(full) : full;
   const ids = planTaskIds(plan);
   const mine = myAssignments();
-  const total = ids.length + mine.length;
-  const doneCount = ids.filter((id) => doneEntry(state, id, key)).length + mine.filter((a) => a.doneAt).length;
+  const bins = wasteNow();
+  const total = ids.length + mine.length + bins.length;
+  const doneCount = ids.filter((id) => doneEntry(state, id, key)).length + mine.filter((a) => a.doneAt).length
+    + bins.filter((e) => wasteDone(state.history, e)).length;
   const pct = total ? doneCount / total : 0;
   const { streak, jokers, doneToday } = computeStreak(state.history, key);
   const todayPts = memberPoints(state, me().id, key);
@@ -280,6 +330,7 @@ function viewToday() {
           <span class="chip" title="Tage am Stück">🔥 ${streak} ${streak === 1 ? 'Tag' : 'Tage'}${doneToday || !streak ? '' : ' – heute noch offen'}</span>
           <span class="chip" title="Joker retten einen verpassten Tag. Alle 7 aktiven Tage gibt es einen neuen.">🃏 ${jokers}/${MAX_JOKERS}</span>
           <span class="chip">⭐ ${todayPts} heute</span>
+          ${nextBinChip()}
         </div>
       </div>
       <div class="hero-ring">${progressRing(pct)}<span>${Math.round(pct * 100)}%</span></div>
@@ -290,6 +341,12 @@ function viewToday() {
     cards.push(section({
       icon: '📨', title: 'Für dich', meta: 'Aufgaben, die dir jemand zugeschickt hat', cls: 'for-you',
       body: mine.map((a) => assignRow(a)).join(''),
+    }));
+  }
+  if (bins.length) {
+    cards.push(section({
+      icon: '🗑️', title: 'Müll', meta: bins.some((e) => !e.today) ? 'morgen wird abgeholt' : 'heute wird abgeholt',
+      body: bins.map(wasteRow).join(''),
     }));
   }
   cards.push(`
@@ -473,6 +530,30 @@ function viewFamily() {
 
 // ---------- Ansicht: Einstellungen ----------
 
+function wasteSettings() {
+  const w = state.waste;
+  const upload = (label, cls) => `<label class="btn ${cls}">${label}<input type="file" accept=".ics,text/calendar" id="waste-import" hidden></label>`;
+  if (!w) {
+    return section({
+      icon: '🗑️', title: 'Abfallkalender',
+      meta: 'Wanda erinnert am Vorabend ans Rausstellen – mit Punkten und zum Zuschicken.',
+      body: `
+        ${upload('📅 Kalenderdatei (.ics) laden', '')}
+        <p class="hint">Die Datei gibt es auf der Webseite eurer Stadt bzw. eures Entsorgers (oft „Abfuhrkalender exportieren“ oder „iCal“) – es ist dieselbe wie im Schichtplaner.${state.sync ? ' Einmal laden reicht, die ganze Familie sieht den Kalender.' : ''}</p>`,
+    });
+  }
+  const next = nextPickups(w, today(), 8);
+  return section({
+    icon: '🗑️', title: 'Abfallkalender', meta: `${esc(w.name)} · ${w.events.length} Termine`,
+    body: `
+      <ul class="pickups">${next.map((e) => `<li><span>${wasteIcon(e.t)}</span><span>${esc(e.t)}</span><small>${e.d === today() ? 'heute' : e.d === addDays(today(), 1) ? 'morgen' : shortDate(e.d)}</small></li>`).join('') || '<li><span>ℹ️</span><span>Keine kommenden Termine – bitte neue Datei laden.</span></li>'}</ul>
+      <div class="row wrap">
+        ${upload('Neue Datei laden', 'ghost')}
+        <button class="btn danger" data-action="remove-waste">Entfernen</button>
+      </div>`,
+  });
+}
+
 function viewSettings() {
   const membersEdit = state.members.map((m) => `
     <div class="row">
@@ -531,6 +612,7 @@ function viewSettings() {
           <button class="btn" data-action="add-task">Hinzufügen</button>
         </div>`,
     })}
+    ${wasteSettings()}
     ${section({
       icon: '💾', title: 'Sicherung',
       meta: state.sync ? 'Eure Daten liegen sicher in der Familien-Cloud. Zusätzlich kannst du eine Kopie herunterladen.' : 'Die Daten liegen bisher nur auf diesem Gerät.',
@@ -660,15 +742,13 @@ function renderSendSheet() {
         ${groups}
       </select>
       <div class="custom">
-        <input type="text" name="title" maxlength="120" placeholder="z. B. Einkaufen gehen, Zimmer aufräumen">
-        <label class="row">Wie unbeliebt? <select name="effort">${Object.entries(EFFORT_LABELS).map(([v, l]) => `<option value="${v}" ${v === '2' ? 'selected' : ''}>${l} (+${POINTS[v]})</option>`).join('')}</select></label>
+        <input type="text" name="title" maxlength="120" value="${esc(sheet.title || '')}" placeholder="z. B. Einkaufen gehen, Zimmer aufräumen">
+        <label class="row">Wie unbeliebt? <select name="effort">${Object.entries(EFFORT_LABELS).map(([v, l]) => `<option value="${v}" ${v === String(sheet.effort || 2) ? 'selected' : ''}>${l} (+${POINTS[v]})</option>`).join('')}</select></label>
       </div>
       <h3>Bis wann? <small>(optional)</small></h3>
       <div class="row wrap due-chips">
-        <label><input type="radio" name="due" value="" checked><span>Ohne</span></label>
-        <label><input type="radio" name="due" value="${today()}"><span>Heute</span></label>
-        <label><input type="radio" name="due" value="${addDays(today(), 1)}"><span>Morgen</span></label>
-        <label><input type="radio" name="due" value="${addDays(mondayOf(today()), 6)}"><span>Sonntag</span></label>
+        ${[['', 'Ohne'], [today(), 'Heute'], [addDays(today(), 1), 'Morgen'], [addDays(mondayOf(today()), 6), 'Sonntag']]
+          .map(([v, l]) => `<label><input type="radio" name="due" value="${v}" ${v === (sheet.due || '') ? 'checked' : ''}><span>${l}</span></label>`).join('')}
       </div>
       <h3>Nachricht <small>(optional)</small></h3>
       <input type="text" name="note" maxlength="300" placeholder="z. B. Oma kommt am Samstag 😉">
@@ -806,6 +886,9 @@ document.addEventListener('focusout', () => setTimeout(() => {
 let remoteTimer = null;
 function onSyncChange(ev) {
   if (ev.type === 'remote') notifyRemote(ev);
+  if (ev.type === 'rejected' && ev.kind === 'waste') {
+    toast('🗑️ Der Abfallkalender ist erst auf diesem Handy. Für die ganze Familie bitte den Datenbank-Nachtrag aus SUPABASE.md ausführen.', 7000);
+  }
   if (ev.type === 'disconnected') toast('Die Familie gibt es nicht mehr – Wanda läuft wieder nur auf diesem Handy.', 4000);
   clearTimeout(remoteTimer);
   remoteTimer = setTimeout(() => {
@@ -864,11 +947,17 @@ function clearJoinHash() {
 // ---------- Ereignisse ----------
 
 document.addEventListener('click', (ev) => {
-  const el = ev.target.closest('[data-task],[data-assign],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
+  const el = ev.target.closest('[data-task],[data-assign],[data-waste],[data-send-waste],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
   if (!el || el.matches('input')) return;
   const d = el.dataset;
   if (d.task) return complete(d.task, ev);
   if (d.assign) return completeAssignment(d.assign, ev);
+  if (d.waste) return completeWaste(d.waste, ev);
+  if (d.sendWaste) {
+    const e = state.waste?.events.find((x) => `${x.d}|${x.t}` === d.sendWaste);
+    if (e) return openSheet({ type: 'send', title: `${e.t} rausstellen`, due: today(), effort: 2 });
+    return;
+  }
   if (d.send) return openSheet({ type: 'send', taskId: d.send });
   if (d.unassign) {
     const a = state.assignments.find((x) => x.id === d.unassign);
@@ -987,6 +1076,10 @@ document.addEventListener('click', (ev) => {
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       return;
     }
+    case 'remove-waste':
+      if (!confirm(`Abfallkalender „${state.waste.name}“ entfernen?`)) return;
+      setWaste(state, null);
+      return render();
     case 'reset':
       if (!confirm('Wirklich alles zurücksetzen? Punkte, Verlauf und eigene Aufgaben gehen verloren.')) return;
       state = freshState();
@@ -1033,8 +1126,24 @@ document.addEventListener('change', (ev) => {
     saveSettings(state);
   } else if (el.id === 'import') {
     importBackup(el.files[0]);
+  } else if (el.id === 'waste-import') {
+    importWasteFile(el.files[0]);
+    el.value = '';
   }
 });
+
+async function importWasteFile(file) {
+  if (!file) return;
+  try {
+    const w = importWaste(await file.text(), file.name, today());
+    if (!w.events.some((e) => e.d >= today())) return toast('In der Datei wurden keine kommenden Termine gefunden.');
+    setWaste(state, w);
+    toast(`🗑️ ${w.events.filter((e) => e.d >= today()).length} Abholtermine aus „${w.name}“ geladen`);
+    render();
+  } catch {
+    toast('Die Datei konnte nicht gelesen werden.');
+  }
+}
 
 async function importBackup(file) {
   if (!file) return;

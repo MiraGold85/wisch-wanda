@@ -115,6 +115,7 @@ async function run(op) {
   if (op.kind === 'household') {
     return c.from('households').update({ room_names: op.value.roomNames, goal: op.value.goal }).eq('id', hid());
   }
+  if (op.kind === 'waste') return c.from('households').update({ waste: op.value || {} }).eq('id', hid());
   const spec = SPECS[op.kind];
   const key = spec.key || 'id';
   if (op.op === 'delete') return c.from(spec.table).delete().eq('household_id', hid()).eq(key, op.value);
@@ -149,6 +150,7 @@ export async function flush() {
       if (error) {
         // z. B. dieselbe Aufgabe hat am selben Tag schon jemand anderes erledigt
         console.warn('Wisch-Wanda: Änderung verworfen', op, error);
+        ctx.onChange({ type: 'rejected', kind: op.kind, error });
         needReload = true;
       } else if (op.kind === 'plan' && op.op === 'insertIgnore') {
         await adoptServerPlan(op.value.date);
@@ -213,6 +215,8 @@ export async function reload() {
     s.roomNames = hh.data.room_names || {};
     if (hh.data.goal?.title) s.goal = hh.data.goal;
   }
+  // Ältere Datenbanken ohne Spalte „waste“: lokalen Kalender behalten.
+  if ('waste' in hh.data) s.waste = hh.data.waste?.events ? hh.data.waste : null;
   s.members = members.map(SPECS.member.fromRow);
   s.tasks = tasks.map(SPECS.task.fromRow);
   s.history = completions.map(SPECS.completion.fromRow);
@@ -227,6 +231,10 @@ export async function reload() {
 function applyLocal(op) {
   const s = st();
   if (op.kind === 'household') return;
+  if (op.kind === 'waste') {
+    s.waste = op.value;
+    return;
+  }
   if (op.kind === 'plan') {
     if (!s.plans[op.value.date]) s.plans[op.value.date] = op.value;
     return;
@@ -251,6 +259,7 @@ function onRemote(kind, payload) {
     const r = payload.new;
     s.roomNames = r.room_names || {};
     if (r.goal?.title) s.goal = r.goal;
+    if ('waste' in r) s.waste = r.waste?.events ? r.waste : null;
     s.sync.name = r.name;
     save(s);
     return ctx.onChange({ type: 'remote', kind });
@@ -371,6 +380,7 @@ export async function createFamily(name) {
     ...(s.history.length ? [{ kind: 'completion', op: 'upsert', value: dedupeCompletions(s.history) }] : []),
     ...(s.assignments.length ? [{ kind: 'assignment', op: 'upsert', value: s.assignments }] : []),
     ...(s.plans[today] ? [{ kind: 'plan', op: 'insertIgnore', value: s.plans[today] }] : []),
+    ...(s.waste ? [{ kind: 'waste', op: 'update', value: s.waste }] : []),
   ];
   save(s);
   await flush();

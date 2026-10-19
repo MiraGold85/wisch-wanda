@@ -12,6 +12,7 @@ create table public.households (
   invite_code text not null unique,
   room_names jsonb not null default '{}',
   goal jsonb not null default '{}',
+  waste jsonb not null default '{}',
   created_at timestamptz not null default now()
 );
 

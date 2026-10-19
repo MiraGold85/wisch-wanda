@@ -45,6 +45,12 @@ Damit niemand in der Familie ein Passwort braucht:
 > Schutzregeln aus. Die Project URL und der Publishable key dagegen sind dafür gedacht, in der App zu
 > stehen: Geschützt sind eure Daten durch die Zugriffsregeln und euren Einladungscode.
 
+## Nachtrag: Abfallkalender (nur falls die Datenbank schon vorher angelegt wurde)
+
+Wurde Schritt 3 vor dem Oktober-Update mit dem Abfallkalender ausgeführt, fehlt der Datenbank ein Feld.
+Im **SQL Editor** einmal den Inhalt von [`supabase/002_abfallkalender.sql`](supabase/002_abfallkalender.sql)
+einfügen und **„Run“** klicken. Mehrfaches Ausführen schadet nicht.
+
 ## Gut zu wissen
 
 - Kostenlose Supabase-Projekte schlafen ein, wenn eine Woche lang niemand die App benutzt.

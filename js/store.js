@@ -1,6 +1,7 @@
 // Datenhaltung: alles liegt lokal auf dem Gerät. Ist die Familie verbunden,
 // wird jede Änderung zusätzlich als „Op“ an den Sync weitergereicht.
 import { ROOMS, POINTS, defaultTasks, buildPlan, dateKey, addDays, dayNum } from './planner.js';
+import { WASTE_POINTS, wasteDone } from './waste.js';
 
 const KEY = 'wisch-wanda-v1';
 const PLAN_KEEP_DAYS = 14;
@@ -30,6 +31,7 @@ export function freshState(today = dateKey()) {
     plans: {},
     quickDays: {},
     goal: { title: 'Pizza-Abend für alle', points: 1000, since: today },
+    waste: null, // Abfallkalender { name, events: [{ d, t }] }
     sync: null, // { householdId, inviteCode, name }
     outbox: [],
   };
@@ -40,6 +42,7 @@ export function migrate(state) {
   state.outbox ??= [];
   state.sync ??= null;
   state.history ??= [];
+  state.waste ??= null;
   return state;
 }
 
@@ -201,6 +204,35 @@ export function toggleAssignment(state, id, key, memberId) {
     { kind: 'completion', op: 'upsert', value: entry },
     { kind: 'assignment', op: 'upsert', value: a },
   ]);
+  return entry;
+}
+
+// ---------- Abfallkalender ----------
+
+export function setWaste(state, waste) {
+  state.waste = waste;
+  push(state, [{ kind: 'waste', op: 'update', value: waste }]);
+}
+
+// Tonne rausstellen abhaken/rückgängig. Gibt den neuen Eintrag zurück (oder null).
+export function toggleWaste(state, pickup, key, memberId) {
+  const existing = wasteDone(state.history, pickup);
+  if (existing) {
+    removeCompletion(state, existing);
+    return null;
+  }
+  const title = `${pickup.t} rausstellen`;
+  const entry = { id: newId(), taskId: null, title, date: key, member: memberId, points: WASTE_POINTS };
+  state.history.push(entry);
+  const ops = [{ kind: 'completion', op: 'upsert', value: entry }];
+  // Wurde die Tonne jemandem zugeschickt, ist das damit auch erledigt.
+  for (const a of state.assignments) {
+    if (!a.taskId && a.title === title && !a.doneAt) {
+      Object.assign(a, { doneAt: key, doneBy: memberId, completionId: entry.id });
+      ops.push({ kind: 'assignment', op: 'upsert', value: a });
+    }
+  }
+  push(state, ops);
   return entry;
 }
 
