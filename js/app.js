@@ -1616,6 +1616,24 @@ setInterval(() => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  // Neue Version veröffentlicht? Dann einmal neu laden – aber nicht beim allerersten Start
+  // und nicht mitten in einer Eingabe oder Raum-Runde.
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    const reload = () => {
+      if (reloading) return;
+      reloading = true;
+      location.reload();
+    };
+    if (!timer && !sheet && !isEditing()) reload();
+    else document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && !timer && reload());
+  });
+  // Beim Zurückkehren in die App nach einer neuen Version schauen
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') navigator.serviceWorker.getRegistration().then((r) => r?.update()).catch(() => {});
+  });
 }
 
 const inviteCode = joinCodeFromUrl();
