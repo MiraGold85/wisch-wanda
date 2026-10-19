@@ -1,5 +1,5 @@
 // Belohnungen: persönliche Serie mit Bonuspunkten und Abzeichen.
-import { ROOMS, HUNDE_CHECK, computeStreak } from './planner.js';
+import { ROOMS, HUNDE_CHECK, DEFAULT_PRIVATE, computeStreak } from './planner.js';
 
 // Bonuspunkte sind Einträge ohne Aufgabe, deren Titel mit 🔥 beginnt.
 export const isBonus = (h) => !h.taskId && typeof h.title === 'string' && h.title.startsWith('🔥 ');
@@ -25,7 +25,15 @@ export function nextMilestone(streak) {
   return MILESTONES.find((m) => m.days > streak) || null;
 }
 
-const COUNTABLE_ROOMS = ROOMS.filter((r) => r.id !== 'alltag').length;
+// Räume, die für „Rundum sauber“ zählen: gemeinsame plus die eigenen privaten
+function roomsFor(state, memberId) {
+  return ROOMS.map((r) => r.id).filter((id) => {
+    if (id === 'alltag') return false;
+    const o = state.roomOwners?.[id];
+    const isPrivate = o === undefined ? DEFAULT_PRIVATE.includes(id) : o !== 'shared';
+    return !isPrivate || o === memberId;
+  });
+}
 
 export const BADGES = [
   { id: 'first', icon: '🧽', title: 'Erster Wisch', text: 'die erste Aufgabe erledigt', goal: 1, stat: 'tasks' },
@@ -35,7 +43,7 @@ export const BADGES = [
   { id: 'bins', icon: '🗑️', title: 'Tonnen-Profi', text: '10 Mal Tonnen rausgestellt', goal: 10, stat: 'bins' },
   { id: 'corners', icon: '🔍', title: 'Ecken-Jäger', text: '10 seltene Aufgaben (Fußleisten, Lichtschalter & Co.)', goal: 10, stat: 'rare' },
   { id: 'helper', icon: '📨', title: 'Zuverlässig', text: '10 zugeschickte Aufgaben erledigt', goal: 10, stat: 'assigned' },
-  { id: 'rooms', icon: '🏠', title: 'Rundum sauber', text: 'in jedem Bereich etwas erledigt', goal: COUNTABLE_ROOMS, stat: 'rooms' },
+  { id: 'rooms', icon: '🏠', title: 'Rundum sauber', text: 'in jedem Bereich etwas erledigt', goal: 0, stat: 'rooms' }, // Ziel je Person
   { id: 'month', icon: '🏆', title: 'Monats-Held', text: '30 Tage am Stück', goal: 30, stat: 'best' },
   { id: 'hundred', icon: '💯', title: 'Hundert', text: '100 Aufgaben erledigt', goal: 100, stat: 'tasks' },
 ];
@@ -44,6 +52,7 @@ export function badgeStats(state, memberId, todayKey) {
   const mine = state.history.filter((h) => h.member === memberId && !isBonus(h));
   const tasks = new Map(state.tasks.map((t) => [t.id, t]));
   const of = (h) => tasks.get(h.taskId);
+  const rooms = roomsFor(state, memberId);
   return {
     tasks: mine.length,
     best: personalStreak(state.history, memberId, todayKey).best,
@@ -52,11 +61,15 @@ export function badgeStats(state, memberId, todayKey) {
     bins: mine.filter((h) => !h.taskId && / rausstellen$/.test(h.title || '')).length,
     rare: mine.filter((h) => (of(h)?.interval ?? 0) >= 30).length,
     assigned: state.assignments.filter((a) => a.doneAt && a.doneBy === memberId && a.to === memberId && !isClaim(a)).length,
-    rooms: new Set(mine.map((h) => of(h)?.room).filter((r) => r && r !== 'alltag')).size,
+    rooms: new Set(mine.map((h) => of(h)?.room).filter((r) => rooms.includes(r))).size,
+    roomsGoal: rooms.length,
   };
 }
 
 export function badgesFor(state, memberId, todayKey) {
   const stats = badgeStats(state, memberId, todayKey);
-  return BADGES.map((b) => ({ ...b, value: Math.min(b.goal, stats[b.stat]), earned: stats[b.stat] >= b.goal }));
+  return BADGES.map((b) => {
+    const goal = b.id === 'rooms' ? stats.roomsGoal : b.goal;
+    return { ...b, goal, value: Math.min(goal, stats[b.stat]), earned: goal > 0 && stats[b.stat] >= goal };
+  });
 }

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   defaultTasks, buildPlan, quickPlan, planTaskIds, computeStreak, focusRoomFor, roundRoomsFor,
-  addDays, dueRatio, levelFor, HUNDE_CHECK, FOCUS_ROOMS, ROUND_ROOMS,
+  addDays, dueRatio, levelFor, privateTasks, HUNDE_CHECK, FOCUS_ROOMS, ROUND_ROOMS,
 } from '../js/planner.js';
 
 const TODAY = '2026-10-19'; // ein Montag
@@ -82,4 +82,27 @@ test('Level steigen mit Punkten', () => {
   assert.equal(levelFor(250).title, 'Wischmop');
   assert.equal(levelFor(250).toNext, 350);
   assert.equal(levelFor(5000).next, undefined);
+});
+
+test('Private Räume: nicht in Runde, Fokus oder Mission', () => {
+  const priv = ['kind1', 'kind2', 'schlafzimmer'];
+  const tasks = defaultTasks(TODAY);
+  for (let i = 0; i < 70; i++) {
+    const key = addDays(TODAY, i);
+    const plan = buildPlan(tasks, key, priv);
+    assert.ok(!priv.includes(plan.focusRoom), `Fokus ${plan.focusRoom}`);
+    assert.ok(plan.rounds.every((r) => !priv.includes(r.room)));
+    const mission = tasks.find((t) => t.id === plan.mission);
+    assert.ok(!mission || !priv.includes(mission.room));
+  }
+});
+
+test('Private Aufgaben: nur fällige aus den eigenen Räumen, dringendste zuerst', () => {
+  const tasks = defaultTasks(TODAY);
+  const bed = tasks.find((t) => t.id === 'kind1-bettwaesche-wechseln');
+  bed.lastDone = addDays(TODAY, -30);
+  const list = privateTasks(tasks, ['kind1'], TODAY);
+  assert.equal(list[0].id, bed.id);
+  assert.ok(list.every((t) => t.room === 'kind1'));
+  assert.ok(list.length <= 4);
 });

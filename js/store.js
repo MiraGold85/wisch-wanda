@@ -1,6 +1,6 @@
 // Datenhaltung: alles liegt lokal auf dem Gerät. Ist die Familie verbunden,
 // wird jede Änderung zusätzlich als „Op“ an den Sync weitergereicht.
-import { ROOMS, POINTS, defaultTasks, buildPlan, dateKey, addDays, dayNum } from './planner.js';
+import { ROOMS, POINTS, DEFAULT_PRIVATE, defaultTasks, buildPlan, dateKey, addDays, dayNum } from './planner.js';
 import { WASTE_POINTS, wasteDone } from './waste.js';
 import { MILESTONES, milestoneTitle, personalStreak, isClaim } from './rewards.js';
 
@@ -25,6 +25,7 @@ export function freshState(today = dateKey()) {
     createdAt: today,
     tasks: defaultTasks(today),
     roomNames: {},
+    roomOwners: {}, // Raum → Person (privat) oder 'shared'; ohne Eintrag gilt DEFAULT_PRIVATE
     members: [{ id: 'm1', name: 'Mama', emoji: '👩' }],
     currentMember: 'm1',
     history: [],
@@ -46,6 +47,7 @@ export function migrate(state) {
   state.history ??= [];
   state.waste ??= null;
   state.push ??= null;
+  state.roomOwners ??= {};
   // Vor Einführung der Markierung geladene Kalender sicherheitshalber als „noch hochzuladen“ behandeln.
   if (state.waste && state.sync && state.wasteUnsynced === undefined) state.wasteUnsynced = true;
   return state;
@@ -70,7 +72,40 @@ export function save(state) {
 }
 
 export function roomName(state, id) {
-  return state.roomNames[id] || ROOMS.find((r) => r.id === id)?.name || id;
+  if (state.roomNames[id]) return state.roomNames[id];
+  // Kinderzimmer ohne eigenen Namen heißen nach der Besitzerin: „Lenas Zimmer“, „Jonas' Zimmer“
+  const owner = state.members.find((m) => m.id === roomOwner(state, id));
+  if (owner && id.startsWith('kind')) return `${owner.name}${/[sxzß]$/i.test(owner.name) ? '’' : 's'} Zimmer`;
+  return ROOMS.find((r) => r.id === id)?.name || id;
+}
+
+// ---------- Private Räume ----------
+
+export function isPrivateRoom(state, id) {
+  const o = state.roomOwners?.[id];
+  return o === undefined ? DEFAULT_PRIVATE.includes(id) : o !== 'shared';
+}
+
+// Besitzerin eines privaten Raums (oder null, wenn gemeinsam oder noch niemand zugeordnet)
+export function roomOwner(state, id) {
+  const o = state.roomOwners?.[id];
+  return o && o !== 'shared' && state.members.some((m) => m.id === o) ? o : null;
+}
+
+export const privateRooms = (state) => ROOMS.map((r) => r.id).filter((id) => isPrivateRoom(state, id));
+export const ownedRooms = (state, memberId) => privateRooms(state).filter((id) => roomOwner(state, id) === memberId);
+// Private Räume, die noch niemandem gehören
+export const unassignedPrivateRooms = (state) => privateRooms(state).filter((id) => !roomOwner(state, id));
+
+// Besitz ändern; der heutige Plan wird neu erstellt, damit die Runde sofort stimmt.
+export function setRoomOwner(state, id, owner) {
+  state.roomOwners = { ...state.roomOwners, [id]: owner };
+  const key = dateKey();
+  state.plans[key] = buildPlan(effectiveTasks(state), key, privateRooms(state));
+  push(state, [
+    { kind: 'household', op: 'update', value: { roomNames: state.roomNames, goal: state.goal, roomOwners: state.roomOwners } },
+    { kind: 'plan', op: 'upsert', value: state.plans[key] },
+  ]);
 }
 
 export function roomEmoji(id) {
@@ -92,7 +127,7 @@ export function effectiveTasks(state) {
 // Plan des Tages holen oder einmalig erzeugen.
 export function planFor(state, key) {
   if (!state.plans[key]) {
-    state.plans[key] = buildPlan(effectiveTasks(state), key);
+    state.plans[key] = buildPlan(effectiveTasks(state), key, privateRooms(state));
     const cutoff = dayNum(addDays(key, -PLAN_KEEP_DAYS));
     for (const k of Object.keys(state.plans)) if (dayNum(k) < cutoff) delete state.plans[k];
     push(state, [{ kind: 'plan', op: 'insertIgnore', value: state.plans[key] }]);
@@ -316,7 +351,7 @@ export function removeTask(state, id) {
 }
 
 export function saveSettings(state) {
-  push(state, [{ kind: 'household', op: 'update', value: { roomNames: state.roomNames, goal: state.goal } }]);
+  push(state, [{ kind: 'household', op: 'update', value: { roomNames: state.roomNames, goal: state.goal, roomOwners: state.roomOwners } }]);
 }
 
 // ---------- Punkte ----------

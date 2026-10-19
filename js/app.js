@@ -1,12 +1,13 @@
 import {
   ROOMS, EFFORT_LABELS, POINTS, HUNDE_CHECK, dateKey, addDays, dueRatio, daysUntilDue, pointsFor,
-  roomStatus, quickPlan, planTaskIds, computeStreak, levelFor, slug, MAX_JOKERS,
+  roomStatus, quickPlan, planTaskIds, computeStreak, levelFor, slug, MAX_JOKERS, privateTasks,
 } from './planner.js';
 import {
   load, save, freshState, migrate, roomName, roomEmoji, planFor, doneEntry, toggleTask, memberPoints, familyPoints,
   effectiveTasks, setPusher, newId, addAssignment, deleteAssignment, toggleAssignment, assignmentTitle, assignmentPoints,
   saveMember, removeMember, saveTask, removeTask, saveSettings, setWaste, toggleWaste,
   syncStreakBonus, toggleClaim, claimOf, cleanupClaims,
+  isPrivateRoom, roomOwner, privateRooms, ownedRooms, unassignedPrivateRooms, setRoomOwner,
 } from './store.js';
 import { personalStreak, nextMilestone, badgesFor, isClaim } from './rewards.js';
 import { importWaste, importFromSchichtplaner, wasteDue, wasteDone, nextPickups, wasteIcon, WASTE_POINTS } from './waste.js';
@@ -347,11 +348,45 @@ function nextBinChip() {
   return `<span class="chip" title="Nächste Abholung">${icons} ${when}</span>`;
 }
 
+// Gespeicherte Pläne können noch private Räume enthalten (z. B. vor der Zuordnung erstellt).
+function withoutPrivate(plan) {
+  const priv = privateRooms(state);
+  const roomOf = (id) => task(id)?.room;
+  return {
+    ...plan,
+    rounds: plan.rounds.filter((r) => !priv.includes(r.room)),
+    focus: priv.includes(plan.focusRoom) ? [] : plan.focus,
+    mission: plan.mission && priv.includes(roomOf(plan.mission)) ? null : plan.mission,
+  };
+}
+
+// Aufgaben in meinen eigenen Zimmern: was fällig ist, plus was ich heute dort schon erledigt habe.
+function ownTasks(key) {
+  const rooms = ownedRooms(state, me().id);
+  if (!rooms.length) return [];
+  const doneHere = state.history
+    .filter((h) => h.date === key && h.member === me().id && rooms.includes(task(h.taskId)?.room))
+    .map((h) => h.taskId);
+  const due = privateTasks(effectiveTasks(state), rooms, key, isQuick() ? 1 : 4).map((t) => t.id);
+  return [...new Set([...doneHere, ...due])];
+}
+
+function ownerSelect(id, includeEmpty) {
+  const o = state.roomOwners?.[id];
+  return `<select data-room-owner="${id}" aria-label="Wem gehört der Raum?">
+    ${includeEmpty ? '<option value="" selected>Wem gehört das Zimmer? …</option>' : ''}
+    <option value="shared" ${!includeEmpty && !isPrivateRoom(state, id) ? 'selected' : ''}>👨‍👩‍👧 gemeinsam</option>
+    ${state.members.map((m) => `<option value="${esc(m.id)}" ${!includeEmpty && o === m.id ? 'selected' : ''}>🔒 ${m.emoji} ${esc(m.name)}</option>`).join('')}
+    ${!includeEmpty && isPrivateRoom(state, id) && !roomOwner(state, id) ? '<option value="" selected>🔒 privat – noch niemand</option>' : ''}
+  </select>`;
+}
+
 function viewToday() {
   const key = today();
   const full = planFor(state, key);
-  const plan = isQuick() ? quickPlan(full) : full;
-  const ids = planTaskIds(plan);
+  const plan = withoutPrivate(isQuick() ? quickPlan(full) : full);
+  const own = ownTasks(key);
+  const ids = [...planTaskIds(plan), ...own];
   const mine = myAssignments();
   const bins = wasteNow();
   const total = ids.length + mine.length + bins.length;
@@ -402,6 +437,26 @@ function viewToday() {
     cards.push(section({
       icon: '📨', title: 'Für dich', meta: 'Aufgaben, die dir jemand zugeschickt hat', cls: 'for-you',
       body: mine.map((a) => assignRow(a)).join(''),
+    }));
+  }
+  const unassigned = unassignedPrivateRooms(state);
+  if (unassigned.length) {
+    cards.push(section({
+      icon: '🔒', title: 'Wem gehört welches Zimmer?',
+      meta: 'Private Zimmer sind nicht in der gemeinsamen Runde. Wer ein Zimmer besitzt, bekommt es auf der eigenen Heute-Seite.',
+      body: unassigned.map((id) => `
+        <div class="row owner-row"><span class="row-emoji">${roomEmoji(id)}</span><span class="owner-room">${esc(roomName(state, id))}</span>${ownerSelect(id, true)}</div>`).join(''),
+    }));
+  }
+  if (own.length || ownedRooms(state, me().id).length) {
+    const rooms = ownedRooms(state, me().id);
+    const nextUp = !own.length && effectiveTasks(state).filter((t) => rooms.includes(t.room))
+      .sort((a, b) => daysUntilDue(a, key) - daysUntilDue(b, key))[0];
+    cards.push(section({
+      icon: '🔒', title: rooms.map((id) => esc(roomName(state, id))).join(' & '),
+      meta: 'nur für dich · die anderen sehen das nicht', cls: 'own-room',
+      body: own.length ? own.map((id) => taskRow(id)).join('')
+        : `<p class="hint">Alles im grünen Bereich ✨${nextUp ? ` Als Nächstes: ${esc(nextUp.name)} in ${daysUntilDue(nextUp, key)} Tagen.` : ''}</p>`,
     }));
   }
   if (bins.length) {
@@ -461,27 +516,41 @@ function viewRooms() {
   const key = today();
   const focus = planFor(state, key).focusRoom;
   const tasks = effectiveTasks(state);
+  const visible = (id) => !isPrivateRoom(state, id) || roomOwner(state, id) === me().id;
   const roomCards = ROOMS.map((r) => {
+    if (!visible(r.id)) {
+      const owner = member(roomOwner(state, r.id));
+      return `
+      <section class="card room private">
+        <div class="room-head">
+          <span class="dot private"></span>
+          <span class="room-name">${r.emoji} ${esc(roomName(state, r.id))}</span>
+          <span class="room-meta">🔒 ${owner ? `gehört ${owner.emoji} ${esc(owner.name)}` : 'privat'}</span>
+        </div>
+      </section>`;
+    }
     const st = roomStatus(tasks, r.id, key);
     const open = openRoom === r.id;
+    const mine = isPrivateRoom(state, r.id);
     const list = tasks.filter((t) => t.room === r.id).sort((a, b) => dueRatio(b, key) - dueRatio(a, key));
     return `
       <section class="card room ${open ? 'open' : ''}">
         <button class="room-head" data-room="${r.id}">
           <span class="dot ${st.level}"></span>
-          <span class="room-name">${r.emoji} ${esc(roomName(state, r.id))}${r.id === focus ? ' <span class="badge">Fokus</span>' : ''}</span>
+          <span class="room-name">${r.emoji} ${esc(roomName(state, r.id))}${r.id === focus && !mine ? ' <span class="badge">Fokus</span>' : ''}${mine ? ' <span class="badge mine">🔒 deins</span>' : ''}</span>
           <span class="room-meta">${st.overdue ? `${st.overdue} fällig` : 'alles gut'}</span>
           <span class="chev">${open ? '▴' : '▾'}</span>
         </button>
-        ${open ? `<div class="room-tasks">${list.map((t) => taskRow(t.id, { due: t, send: state.members.length > 1 })).join('')}</div>` : ''}
+        ${open ? `<div class="room-tasks">${list.map((t) => taskRow(t.id, { due: t, send: state.members.length > 1 && !mine })).join('')}</div>` : ''}
       </section>`;
   });
-  const green = ROOMS.filter((r) => roomStatus(tasks, r.id, key).level === 'green').length;
+  const shown = ROOMS.filter((r) => visible(r.id));
+  const green = shown.filter((r) => roomStatus(tasks, r.id, key).level === 'green').length;
   return `
     <section class="hero slim">
       <div class="hero-text">
         <p class="hello">Wie steht's ums Haus?</p>
-        <p class="wanda-says"><img src="icons/wanda.svg" alt="" class="wanda-mini">${green} von ${ROOMS.length} Bereichen sind grün. Tipp auf einen Raum, um auch außer der Reihe etwas abzuhaken${state.members.length > 1 ? ' oder mit 📨 jemandem zuzuschicken' : ''}.</p>
+        <p class="wanda-says"><img src="icons/wanda.svg" alt="" class="wanda-mini">${green} von ${shown.length} Bereichen sind grün. Tipp auf einen Raum, um auch außer der Reihe etwas abzuhaken${state.members.length > 1 ? ' oder mit 📨 jemandem zuzuschicken' : ''}.</p>
       </div>
     </section>
     ${roomCards.join('')}`;
@@ -718,8 +787,11 @@ function viewSettings() {
     </div>`).join('');
 
   const roomsEdit = ROOMS.filter((r) => r.id !== 'alltag').map((r) => `
-    <div class="row"><span class="row-emoji">${r.emoji}</span>
-      <input type="text" maxlength="40" value="${esc(roomName(state, r.id))}" data-room-name="${r.id}" aria-label="Raumname"></div>`).join('');
+    <div class="room-edit">
+      <div class="row"><span class="row-emoji">${r.emoji}</span>
+        <input type="text" maxlength="40" value="${esc(roomName(state, r.id))}" data-room-name="${r.id}" aria-label="Raumname"></div>
+      <div class="row owner-line">${ownerSelect(r.id, false)}</div>
+    </div>`).join('');
 
   const effortOpts = (sel) => Object.entries(EFFORT_LABELS).map(([v, l]) => `<option value="${v}" ${+v === sel ? 'selected' : ''}>${l}</option>`).join('');
   const roomOpts = (sel) => ROOMS.map((r) => `<option value="${r.id}" ${r.id === sel ? 'selected' : ''}>${r.emoji} ${esc(roomName(state, r.id))}</option>`).join('');
@@ -751,7 +823,7 @@ function viewSettings() {
         <label class="check-line"><input type="checkbox" data-goal="loserPays" ${state.goal.loserPays !== false ? 'checked' : ''}> 🍕 Wer am wenigsten beiträgt, spendiert die Belohnung</label>
         <button class="btn ghost" data-action="new-goal">Ziel neu starten (Punkte ab heute zählen)</button>`,
     })}
-    ${section({ icon: '🏠', title: 'Räume benennen', meta: 'z. B. „Lenas Zimmer“ statt „Kinderzimmer 1“', body: roomsEdit })}
+    ${section({ icon: '🏠', title: 'Räume', meta: 'Name und wem der Raum gehört. 🔒 Private Räume sind nicht in der gemeinsamen Runde – nur die Besitzerin bekommt sie angezeigt.', body: roomsEdit })}
     ${section({
       icon: '📋', title: 'Aufgaben & Intervalle', meta: 'Unbeliebtheit bestimmt die Punkte: Kleinigkeit 5 … Endgegner 50',
       body: `${tasksEdit}
@@ -1323,6 +1395,12 @@ document.addEventListener('change', (ev) => {
     m.emoji = el.value;
     saveMember(state, m);
     document.getElementById('me-btn').textContent = me().emoji;
+  } else if (d.roomOwner) {
+    if (!el.value) return;
+    setRoomOwner(state, d.roomOwner, el.value);
+    const o = member(el.value);
+    toast(o ? `🔒 ${roomName(state, d.roomOwner)} gehört jetzt ${o.name}.` : `👨‍👩‍👧 ${roomName(state, d.roomOwner)} ist jetzt gemeinsam.`);
+    render();
   } else if (d.roomName) {
     const def = ROOMS.find((r) => r.id === d.roomName).name;
     const v = el.value.trim();

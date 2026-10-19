@@ -18,6 +18,8 @@ export const ROOMS = [
 export const ROUND_ROOMS = ['treppenhaus', 'flur', 'bad', 'wc', 'kind1', 'kind2', 'wohnzimmer', 'kueche', 'schlafzimmer'];
 // Fokus-Raum-Rotation: jede Woche ein anderer Raum gründlich.
 export const FOCUS_ROOMS = [...ROUND_ROOMS, 'terrasse'];
+// Diese Räume sind von Anfang an privat (gehören einer Person) – siehe Raum-Besitz in den Einstellungen.
+export const DEFAULT_PRIVATE = ['kind1', 'kind2', 'schlafzimmer'];
 
 // Unbeliebtheit 1–5 → Punkte. Die fiesen Aufgaben lohnen sich richtig.
 export const POINTS = { 1: 5, 2: 10, 3: 20, 4: 35, 5: 50 };
@@ -214,20 +216,22 @@ export function roomStatus(tasks, roomId, todayKey) {
 
 // ---------- Tagesplan ----------
 
-export function focusRoomFor(key) {
-  return FOCUS_ROOMS[weekIndex(key) % FOCUS_ROOMS.length];
+// Private Räume (privateRooms) gehören nicht in die gemeinsame Rotation.
+export function focusRoomFor(key, privateRooms = []) {
+  const rooms = FOCUS_ROOMS.filter((r) => !privateRooms.includes(r));
+  return rooms[weekIndex(key) % rooms.length];
 }
 
-export function roundRoomsFor(key, count = 4) {
-  const focus = focusRoomFor(key);
-  const rooms = ROUND_ROOMS.filter((r) => r !== focus);
+export function roundRoomsFor(key, count = 4, privateRooms = []) {
+  const focus = focusRoomFor(key, privateRooms);
+  const rooms = ROUND_ROOMS.filter((r) => r !== focus && !privateRooms.includes(r));
   const start = (dayNum(key) * count) % rooms.length;
   return Array.from({ length: Math.min(count, rooms.length) }, (_, i) => rooms[(start + i) % rooms.length]);
 }
 
 // Erstellt den Plan für einen Tag. Wird einmal pro Tag gespeichert, damit er sich
 // beim Abhaken nicht verschiebt.
-export function buildPlan(tasks, key) {
+export function buildPlan(tasks, key, privateRooms = []) {
   const urgent = byUrgency(key);
   const used = new Set();
   const take = (list) => {
@@ -246,7 +250,7 @@ export function buildPlan(tasks, key) {
       .sort((a, b) => (b.id === HUNDE_CHECK) - (a.id === HUNDE_CHECK) || urgent(a, b)),
   );
 
-  const rounds = roundRoomsFor(key).map((room) => ({
+  const rounds = roundRoomsFor(key, 4, privateRooms).map((room) => ({
     room,
     tasks: take(
       tasks
@@ -256,7 +260,7 @@ export function buildPlan(tasks, key) {
     ),
   }));
 
-  const focusRoom = focusRoomFor(key);
+  const focusRoom = focusRoomFor(key, privateRooms);
   const deep = tasks
     .filter((t) => t.room === focusRoom && !used.has(t.id) && t.interval >= 14)
     .sort(urgent);
@@ -264,7 +268,7 @@ export function buildPlan(tasks, key) {
   const focus = take((deepDue.length ? deepDue : deep).slice(0, 3));
 
   const missionTask = tasks
-    .filter((t) => t.interval >= 30 && t.room !== focusRoom && !used.has(t.id))
+    .filter((t) => t.interval >= 30 && t.room !== focusRoom && !privateRooms.includes(t.room) && !used.has(t.id))
     .sort(urgent)[0];
   const mission = missionTask ? take([missionTask])[0] : null;
 
@@ -342,4 +346,12 @@ export function levelFor(points) {
   });
   const next = LEVELS[index + 1];
   return { ...LEVELS[index], index, next, toNext: next ? next.min - points : 0 };
+}
+
+// Aufgaben in privaten Räumen für die Besitzerin: was fällig ist, dringendste zuerst.
+export function privateTasks(tasks, rooms, key, max = 4) {
+  return tasks
+    .filter((t) => rooms.includes(t.room) && dueRatio(t, key) >= 1)
+    .sort(byUrgency(key))
+    .slice(0, max);
 }

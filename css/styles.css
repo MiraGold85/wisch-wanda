@@ -406,3 +406,17 @@ input[type="number"] { width: 72px; }
 .member-body small + small { margin-top: 1px; }
 .check-line { display: flex; gap: 8px; align-items: flex-start; font-size: 14.5px; }
 .check-line input { width: 20px; height: 20px; flex: none; accent-color: var(--brand); margin-top: 1px; }
+
+/* ---------- Private Räume ---------- */
+
+.dot.private { background: transparent; border: 2px solid var(--muted); }
+.room.private .room-head { cursor: default; }
+.room.private { opacity: .8; }
+.badge.mine { background: var(--brand-soft); color: var(--brand); }
+.own-room { border: 2px solid color-mix(in srgb, var(--brand) 40%, transparent); }
+.owner-row { flex-wrap: wrap; row-gap: 4px; }
+.owner-row .owner-room { flex: 1 1 auto; min-width: 0; font-weight: 600; }
+.owner-row select { flex: 1 1 100%; min-width: 0; }
+.room-edit { display: grid; gap: 6px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.owner-line { padding-left: 40px; }
+.owner-line select { width: 100%; }

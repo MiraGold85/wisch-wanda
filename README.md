@@ -17,6 +17,7 @@ jede Woche ein Raum gründlich – mit Punkten, Serien und einem gemeinsamen Fam
 - **Punkte nach Unbeliebtheit:** Kleinigkeit 5 · Geht so 10 · Lästig 20 · Unbeliebt 35 · Endgegner 50.
 - **Persönliche Serie & Joker:** Jede Person hat ihre eigene Serie. Alle 7 aktiven Tage gibt es einen Joker (max. 3), der einen verpassten Tag rettet. Bonuspunkte bei 3, 7, 14, 30, 60, 100, 200 und 365 Tagen.
 - **Abzeichen:** z. B. Endgegner besiegt, Hunde-Held, Tonnen-Profi, Ecken-Jäger – mit Fortschrittsanzeige.
+- **🔒 Private Zimmer:** Kinderzimmer und Elternschlafzimmer gehören einer Person – sie sind nicht in der gemeinsamen Runde; die Besitzerin bekommt „Dein Zimmer“ auf ihrer eigenen Heute-Seite, die anderen sehen nur „privat“.
 - **🙋 Übernehme ich:** Der Tagesplan gilt für die ganze Familie; jede Person markiert, was sie übernimmt.
 - **Rangliste zum Familienziel:** Wer hat wie viel beigetragen – wer am wenigsten hat, spendiert (abschaltbar).
 - **„Nur 15 Minuten“:** gekürzter Plan für Tage mit wenig Energie.

@@ -53,6 +53,14 @@ const SPECS = {
   },
 };
 
+// Raum-Besitz liegt mit in room_names (Schlüssel „__owners“), damit keine neue Spalte nötig ist.
+const packRooms = ({ roomNames, roomOwners }) => ({ ...roomNames, __owners: roomOwners || {} });
+function unpackRooms(s, raw) {
+  const { __owners: owners, ...names } = raw || {};
+  s.roomNames = names;
+  if (owners) s.roomOwners = owners;
+}
+
 let ctx = null; // { getState, onChange(event), onStatus(status) }
 let client = null;
 let channel = null;
@@ -113,7 +121,7 @@ function rows(op) {
 async function run(op) {
   const c = await getClient();
   if (op.kind === 'household') {
-    return c.from('households').update({ room_names: op.value.roomNames, goal: op.value.goal }).eq('id', hid());
+    return c.from('households').update({ room_names: packRooms(op.value), goal: op.value.goal }).eq('id', hid());
   }
   if (op.kind === 'waste') return c.from('households').update({ waste: op.value || {} }).eq('id', hid());
   const spec = SPECS[op.kind];
@@ -214,7 +222,7 @@ export async function reload() {
   const pending = s.outbox;
   s.sync.name = hh.data.name;
   if (Object.keys(hh.data.room_names || {}).length || hh.data.goal?.title) {
-    s.roomNames = hh.data.room_names || {};
+    unpackRooms(s, hh.data.room_names);
     if (hh.data.goal?.title) s.goal = hh.data.goal;
   }
   // Ältere Datenbanken ohne Spalte „waste“: lokalen Kalender behalten.
@@ -250,7 +258,7 @@ function applyLocal(op) {
     return;
   }
   if (op.kind === 'plan') {
-    if (!s.plans[op.value.date]) s.plans[op.value.date] = op.value;
+    if (op.op === 'upsert' || !s.plans[op.value.date]) s.plans[op.value.date] = op.value;
     return;
   }
   const list = s[SPECS[op.kind].list];
@@ -271,7 +279,7 @@ function onRemote(kind, payload) {
   const s = st();
   if (kind === 'household') {
     const r = payload.new;
-    s.roomNames = r.room_names || {};
+    unpackRooms(s, r.room_names);
     if (r.goal?.title) s.goal = r.goal;
     if ('waste' in r && !(s.wasteUnsynced && !r.waste?.events)) {
       s.waste = r.waste?.events ? r.waste : null;
@@ -391,7 +399,7 @@ export async function createFamily(name) {
   // Alles Bisherige hochladen.
   const today = dateKey();
   s.outbox = [
-    { kind: 'household', op: 'update', value: { roomNames: s.roomNames, goal: s.goal } },
+    { kind: 'household', op: 'update', value: { roomNames: s.roomNames, goal: s.goal, roomOwners: s.roomOwners } },
     { kind: 'member', op: 'upsert', value: s.members },
     { kind: 'task', op: 'upsert', value: s.tasks },
     ...(s.history.length ? [{ kind: 'completion', op: 'upsert', value: dedupeCompletions(s.history) }] : []),
