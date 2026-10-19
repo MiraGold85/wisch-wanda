@@ -592,6 +592,7 @@ function syncCard() {
     icon: '☁️', title: esc(state.sync.name || 'Familie'),
     meta: `<span class="sync-dot ${sync.getStatus()}"></span> ${STATUS_TEXT[sync.getStatus()] || ''}`,
     body: `
+      <p class="owner-line-me">📱 Dieses Handy gehört: <b>${me().emoji} ${esc(me().name)}</b></p>
       <div class="invite">
         <span>Einladungscode</span>
         <b>${formatCode(state.sync.inviteCode)}</b>
@@ -599,7 +600,8 @@ function syncCard() {
       <div class="row wrap">
         <button class="btn" data-action="share-invite">📤 Einladung teilen</button>
         <button class="btn ghost small" data-action="leave">Dieses Handy abmelden</button>
-      </div>`,
+      </div>
+      <p class="hint">Falsche Person gewählt? „Dieses Handy abmelden“ und mit dem Code neu beitreten.</p>`,
   });
 }
 
@@ -660,7 +662,8 @@ function viewFamily() {
         ${goalRanking(g, goalPts)}`,
     })}
     ${badgeCard(key)}
-    ${section({
+    ${state.sync ? '' : section({
+      // Nur wenn sich mehrere ein Handy teilen – mit Familien-Verbindung hat jede Person ihr eigenes Handy.
       icon: '👨‍👩‍👧', title: 'Wer bist du gerade?', meta: 'Punkte werden der ausgewählten Person gutgeschrieben',
       body: `<div class="who">${state.members.map((m) => `
         <button class="who-btn ${m.id === state.currentMember ? 'active' : ''}" data-member="${esc(m.id)}">${m.emoji}<span>${esc(m.name)}</span></button>`).join('')}</div>`,
@@ -1038,6 +1041,7 @@ function renderPicker() {
       <img src="icons/wanda.svg" alt="" class="wanda-big">
       <h2>Willkommen bei ${esc(state.sync?.name || 'der Familie')}!</h2>
       <h3>Wer bist du?</h3>
+      <p class="hint">Wähle dich selbst – das gilt dann fest für dieses Handy.</p>
       <div class="who">${state.members.map((m) => `
         <button type="button" class="who-btn" data-pick="${esc(m.id)}">${m.emoji}<span>${esc(m.name)}</span></button>`).join('')}
       </div>
@@ -1251,6 +1255,7 @@ document.addEventListener('click', (ev) => {
     return render();
   }
   if (d.member) {
+    if (state.sync) return; // mit Familien-Verbindung steht fest, wem das Handy gehört
     state.currentMember = d.member;
     save(state);
     pushFollowMember();

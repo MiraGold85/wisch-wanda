@@ -424,3 +424,4 @@ input[type="number"] { width: 72px; }
 .owner-chip.active { border-color: var(--brand); background: var(--brand-soft); color: var(--brand); }
 .room-edit { display: grid; gap: 6px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
 .owner-line { padding-left: 40px; }
+.owner-line-me { font-size: 15px; }
