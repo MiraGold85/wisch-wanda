@@ -6,7 +6,9 @@ import {
   load, save, freshState, migrate, roomName, roomEmoji, planFor, doneEntry, toggleTask, memberPoints, familyPoints,
   effectiveTasks, setPusher, newId, addAssignment, deleteAssignment, toggleAssignment, assignmentTitle, assignmentPoints,
   saveMember, removeMember, saveTask, removeTask, saveSettings, setWaste, toggleWaste,
+  syncStreakBonus, toggleClaim, claimOf, cleanupClaims,
 } from './store.js';
+import { personalStreak, nextMilestone, badgesFor, isClaim } from './rewards.js';
 import { importWaste, importFromSchichtplaner, wasteDue, wasteDone, nextPickups, wasteIcon, WASTE_POINTS } from './waste.js';
 import * as sync from './sync.js';
 import { pushSupport, enablePush, updatePush, disablePush, testPush } from './push.js';
@@ -117,6 +119,29 @@ function beep() {
 
 // ---------- Abhaken ----------
 
+const earnedIds = () => new Set(badgesFor(state, me().id, today()).filter((b) => b.earned).map((b) => b.id));
+
+// Nach jedem Abhaken (und Rückgängigmachen): Serien-Bonus und neue Abzeichen prüfen.
+function rewardCheck(before) {
+  const bonus = syncStreakBonus(state, me().id, today());
+  const fresh = badgesFor(state, me().id, today()).filter((b) => b.earned && !before.has(b.id));
+  let delay = 2300;
+  if (bonus) {
+    setTimeout(() => {
+      burst(window.innerWidth / 2, window.innerHeight / 3, true);
+      toast(`${bonus.title}! +${bonus.points} Bonuspunkte 🎉`, 3500);
+    }, delay);
+    delay += 3600;
+  }
+  for (const b of fresh) {
+    setTimeout(() => {
+      burst(window.innerWidth / 2, window.innerHeight / 3, true);
+      toast(`🏅 Neues Abzeichen: ${b.icon} ${b.title}!`, 3500);
+    }, delay);
+    delay += 3600;
+  }
+}
+
 function celebrate(entry, big, ev) {
   const rect = ev?.target?.closest('[data-task],[data-assign]')?.getBoundingClientRect();
   if (rect) burst(rect.left + 28, rect.top + rect.height / 2, big);
@@ -130,8 +155,10 @@ function complete(taskId, ev) {
   if (!t) return;
   const done = doneEntry(state, taskId, today());
   if (done && done.member !== me().id && !confirm(`${member(done.member)?.name ?? 'Jemand'} hat „${t.name}“ heute schon erledigt. Wirklich rückgängig machen?`)) return;
+  const before = earnedIds();
   const entry = toggleTask(state, taskId, today(), me().id, pointsFor(t));
   if (entry) celebrate(entry, t.effort >= 4, ev);
+  rewardCheck(before);
   render();
   if (timer) renderTimer();
 }
@@ -141,16 +168,20 @@ function completeWaste(key, ev) {
   if (!e) return;
   const done = wasteDone(state.history, e);
   if (done && done.member !== me().id && !confirm(`${member(done.member)?.name ?? 'Jemand'} hat „${e.t}“ schon rausgestellt. Wirklich rückgängig machen?`)) return;
+  const before = earnedIds();
   const entry = toggleWaste(state, e, today(), me().id);
   if (entry) celebrate(entry, false, ev);
+  rewardCheck(before);
   render();
 }
 
 function completeAssignment(id, ev) {
   const a = state.assignments.find((x) => x.id === id);
   if (!a) return;
+  const before = earnedIds();
   const entry = toggleAssignment(state, id, today(), me().id);
   if (entry) celebrate(entry, (task(a.taskId)?.effort ?? 0) >= 4 || entry.points >= 35, ev);
+  rewardCheck(before);
   render();
 }
 
@@ -173,10 +204,12 @@ function taskRow(id, opts = {}) {
   const t = task(id);
   if (!t) return '';
   const done = doneEntry(state, id, today());
+  const claim = opts.claim && !done && state.members.length > 1 ? claimOf(state, { taskId: id }, today()) : null;
   const sub = [];
   if (opts.showRoom) sub.push(`${roomEmoji(t.room)} ${esc(roomName(state, t.room))}`);
   if (done) sub.push(`erledigt von ${who(done.member)}`);
   else if (opts.due) sub.push(dueText(opts.due));
+  if (claim) sub.push(claimText(claim));
   const row = `
     <button class="task ${done ? 'done' : ''} effort-${t.effort}" data-task="${esc(id)}">
       <span class="check" aria-hidden="true">${done ? '✓' : ''}</span>
@@ -186,8 +219,20 @@ function taskRow(id, opts = {}) {
       </span>
       <span class="pts" title="${EFFORT_LABELS[t.effort]}">+${pointsFor(t)}</span>
     </button>`;
+  if (opts.claim && !done && state.members.length > 1 && (!claim || claim.to === me().id)) {
+    return `<div class="task-wrap">${row}${claimButton('data-claim', id, claim)}</div>`;
+  }
   if (!opts.send) return row;
   return `<div class="task-wrap">${row}<button class="send-btn" data-send="${esc(id)}" aria-label="Aufgabe zuschicken" title="Jemandem zuschicken">📨</button></div>`;
+}
+
+function claimText(claim) {
+  return claim.to === me().id ? '<span class="claimed">🙋 du machst das</span>' : `<span class="claimed">🙋 ${who(claim.to)} macht das</span>`;
+}
+
+function claimButton(attr, value, claim) {
+  const mine = claim && claim.to === me().id;
+  return `<button class="send-btn claim-btn ${mine ? 'active' : ''}" ${attr}="${esc(value)}" aria-label="${mine ? 'Doch nicht übernehmen' : 'Übernehme ich'}" title="${mine ? 'Doch nicht' : 'Übernehme ich'}">🙋</button>`;
 }
 
 function dueText(t) {
@@ -239,11 +284,12 @@ function wasteNow() {
 
 function wasteRow(e) {
   const done = wasteDone(state.history, e);
-  const sent = !done && state.assignments.find((a) => !a.taskId && !a.doneAt && a.title === e.title);
+  const sent = !done && state.assignments.find((a) => !a.taskId && !a.doneAt && a.title === e.title && !isClaim(a));
+  const claim = !done && !sent ? claimOf(state, { title: e.title }, today()) : null;
   const sub = done
     ? `erledigt von ${who(done.member)}`
     : [e.today ? '<span class="late">heute ist Abholung – schnell noch raus!</span>' : 'morgen ist Abholung · heute Abend rausstellen',
-      sent ? `📨 an ${who(sent.to)}` : ''].filter(Boolean).join(' · ');
+      sent ? `📨 an ${who(sent.to)}` : '', claim ? claimText(claim) : ''].filter(Boolean).join(' · ');
   const row = `
     <button class="task ${done ? 'done' : ''}" data-waste="${esc(`${e.d}|${e.t}`)}">
       <span class="check" aria-hidden="true">${done ? '✓' : ''}</span>
@@ -254,7 +300,10 @@ function wasteRow(e) {
       <span class="pts">+${WASTE_POINTS}</span>
     </button>`;
   if (done || sent || state.members.length < 2) return row;
-  return `<div class="task-wrap">${row}<button class="send-btn" data-send-waste="${esc(`${e.d}|${e.t}`)}" aria-label="Jemandem zuschicken" title="Jemandem zuschicken">📨</button></div>`;
+  const key = `${e.d}|${e.t}`;
+  const claimBtn = !claim || claim.to === me().id ? claimButton('data-claim-waste', key, claim) : '';
+  const sendBtn = claim ? '' : `<button class="send-btn" data-send-waste="${esc(key)}" aria-label="Jemandem zuschicken" title="Jemandem zuschicken">📨</button>`;
+  return claimBtn || sendBtn ? `<div class="task-wrap">${row}${claimBtn}${sendBtn}</div>` : row;
 }
 
 function section({ icon, title, meta, body, extra = '', cls = '' }) {
@@ -284,7 +333,7 @@ function progressRing(pct) {
 function myAssignments() {
   const k = today();
   return state.assignments
-    .filter((a) => a.to === me().id && (!a.doneAt || a.doneAt === k))
+    .filter((a) => a.to === me().id && !isClaim(a) && (!a.doneAt || a.doneAt === k))
     .sort((a, b) => !!a.doneAt - !!b.doneAt || (a.due || '9999').localeCompare(b.due || '9999'));
 }
 
@@ -309,8 +358,12 @@ function viewToday() {
   const doneCount = ids.filter((id) => doneEntry(state, id, key)).length + mine.filter((a) => a.doneAt).length
     + bins.filter((e) => wasteDone(state.history, e)).length;
   const pct = total ? doneCount / total : 0;
-  const { streak, jokers, doneToday } = computeStreak(state.history, key);
+  const { streak, jokers, doneToday } = personalStreak(state.history, me().id, key);
+  const next = nextMilestone(streak);
   const todayPts = memberPoints(state, me().id, key);
+  const claims = state.assignments.filter((a) => isClaim(a) && a.to === me().id && a.due === key);
+  const claimsOpen = claims.filter((a) => !a.doneAt).length;
+  const family = state.members.length > 1;
   const allDone = total && doneCount === total;
   const mins = isQuick() ? ROUND_MINUTES.quick : ROUND_MINUTES.normal;
 
@@ -318,9 +371,13 @@ function viewToday() {
     ? 'Alles geschafft! Feierabend – du hast es dir verdient. 🛋️'
     : mine.some((a) => !a.doneAt)
       ? `Du hast ${mine.filter((a) => !a.doneAt).length} zugeschickte ${mine.filter((a) => !a.doneAt).length === 1 ? 'Aufgabe' : 'Aufgaben'}. 📨`
-      : doneCount
-        ? `${doneCount} von ${total} erledigt. Weiter so!`
-        : MORNING_LINES[new Date().getDate() % MORNING_LINES.length];
+      : claimsOpen
+        ? `Du hast noch ${claimsOpen} von ${claims.length} übernommenen ${claims.length === 1 ? 'Aufgabe' : 'Aufgaben'} offen. 🙋`
+        : doneCount
+          ? `${doneCount} von ${total} erledigt. Weiter so!`
+          : family && !state.assignments.some((a) => isClaim(a) && a.due === key)
+            ? 'Der Plan gilt für die ganze Familie. Mit 🙋 sagst du, welche Aufgaben du übernimmst!'
+            : MORNING_LINES[new Date().getDate() % MORNING_LINES.length];
 
   const hero = `
     <section class="hero">
@@ -328,16 +385,19 @@ function viewToday() {
         <p class="hello">${greeting()}, ${esc(me().name)}!</p>
         <p class="wanda-says"><img src="icons/wanda.svg" alt="" class="wanda-mini">${line}</p>
         <div class="stats">
-          <span class="chip" title="Tage am Stück">🔥 ${streak} ${streak === 1 ? 'Tag' : 'Tage'}${doneToday || !streak ? '' : ' – heute noch offen'}</span>
+          <span class="chip" title="${next ? `Deine Serie – bei ${next.days} Tagen gibt es +${next.points} Bonuspunkte` : 'Deine Serie'}">🔥 ${streak} ${streak === 1 ? 'Tag' : 'Tage'}${doneToday || !streak ? '' : ' – heute noch offen'}</span>
           <span class="chip" title="Joker retten einen verpassten Tag. Alle 7 aktiven Tage gibt es einen neuen.">🃏 ${jokers}/${MAX_JOKERS}</span>
           <span class="chip">⭐ ${todayPts} heute</span>
+          ${claims.length ? `<span class="chip" title="Von dir übernommen">🙋 ${claims.length - claimsOpen}/${claims.length}</span>` : ''}
           ${nextBinChip()}
         </div>
       </div>
       <div class="hero-ring">${progressRing(pct)}<span>${Math.round(pct * 100)}%</span></div>
-    </section>`;
+    </section>
+    ${next && streak > 0 ? `<p class="streak-next">🔥 Noch ${next.days - streak} ${next.days - streak === 1 ? 'Tag' : 'Tage'} bis zu <b>+${next.points} Bonuspunkten</b>${doneToday ? '' : ' – heute schon was erledigt?'}</p>` : ''}`;
 
   const cards = [];
+  const row = (id) => taskRow(id, { claim: true });
   if (mine.length) {
     cards.push(section({
       icon: '📨', title: 'Für dich', meta: 'Aufgaben, die dir jemand zugeschickt hat', cls: 'for-you',
@@ -359,13 +419,13 @@ function viewToday() {
   if (plan.alltag.length) {
     cards.push(section({
       icon: '☀️', title: 'Grundroutine', meta: 'ca. 10 Minuten · das tägliche Fundament',
-      body: plan.alltag.map((id) => taskRow(id)).join(''),
+      body: plan.alltag.map(row).join(''),
     }));
   }
   if (plan.hunde.length) {
     cards.push(section({
       icon: '🐾', title: 'Terrasse & Hunde', meta: 'kurz nachsehen, bevor jemand reintritt',
-      body: plan.hunde.map((id) => taskRow(id)).join(''),
+      body: plan.hunde.map(row).join(''),
     }));
   }
   if (plan.rounds.length) {
@@ -375,7 +435,7 @@ function viewToday() {
       body: plan.rounds.map((r) => `
         <div class="round-room">
           <h3>${roomEmoji(r.room)} ${esc(roomName(state, r.room))}</h3>
-          ${r.tasks.length ? r.tasks.map((id) => taskRow(id)).join('') : '<p class="hint">Kurz durchgehen: Oberflächen frei, Dinge wegräumen, lüften.</p>'}
+          ${r.tasks.length ? r.tasks.map(row).join('') : '<p class="hint">Kurz durchgehen: Oberflächen frei, Dinge wegräumen, lüften.</p>'}
         </div>`).join(''),
     }));
   }
@@ -383,13 +443,13 @@ function viewToday() {
     cards.push(section({
       icon: '🔍', title: `Fokus der Woche: ${esc(roomName(state, plan.focusRoom))}`,
       meta: 'ca. 15–20 Minuten · diese Woche wird hier gründlich geputzt',
-      body: plan.focus.map((id) => taskRow(id)).join(''),
+      body: plan.focus.map(row).join(''),
     }));
   }
   if (plan.mission) {
     cards.push(section({
       icon: '🎯', title: 'Mission des Tages', meta: 'die Ecke, die sonst immer vergessen wird', cls: 'mission',
-      body: taskRow(plan.mission, { showRoom: true }),
+      body: taskRow(plan.mission, { showRoom: true, claim: true }),
     }));
   }
   return hero + cards.join('');
@@ -478,12 +538,15 @@ function viewFamily() {
 
   const members = ranking.map(({ m, week, total }) => {
     const lvl = levelFor(total);
+    const { streak } = personalStreak(state.history, m.id, key);
+    const badges = badgesFor(state, m.id, key).filter((b) => b.earned);
     return `
       <div class="member ${m.id === state.currentMember ? 'me' : ''}">
         <span class="avatar">${m.emoji}</span>
         <div class="member-body">
           <b>${esc(m.name)}</b>
           <small>${lvl.emoji} ${lvl.title}${lvl.next ? ` · noch ${lvl.toNext} bis ${lvl.next.emoji}` : ''}</small>
+          <small>🔥 ${streak} ${streak === 1 ? 'Tag' : 'Tage'}${badges.length ? ` · ${badges.map((b) => b.icon).join('')}` : ''}</small>
         </div>
         <div class="member-pts"><b>${week}</b><small>diese Woche</small></div>
       </div>`;
@@ -499,7 +562,7 @@ function viewFamily() {
   // Offene Zuschickungen plus die der letzten drei Tage
   const recentCut = addDays(key, -3);
   const sent = state.assignments
-    .filter((a) => !a.doneAt || a.doneAt >= recentCut)
+    .filter((a) => !isClaim(a) && (!a.doneAt || a.doneAt >= recentCut))
     .sort((a, b) => !!a.doneAt - !!b.doneAt || (a.due || '9999').localeCompare(b.due || '9999'));
 
   return `
@@ -515,8 +578,10 @@ function viewFamily() {
       icon: '🎁', title: 'Familienziel', meta: esc(g.title),
       body: `
         <div class="goal-bar"><span style="width:${goalPct * 100}%"></span></div>
-        <p class="goal-text">${goalPts} von ${g.points} Punkten${g.reachedAt ? ' – 🎉 geschafft! Neues Ziel in den Einstellungen setzen.' : ''}</p>`,
+        <p class="goal-text">${goalPts} von ${g.points} Punkten${g.reachedAt ? ' – 🎉 geschafft! Neues Ziel in den Einstellungen setzen.' : ''}</p>
+        ${goalRanking(g, goalPts)}`,
     })}
+    ${badgeCard(key)}
     ${section({
       icon: '👨‍👩‍👧', title: 'Wer bist du gerade?', meta: 'Punkte werden der ausgewählten Person gutgeschrieben',
       body: `<div class="who">${state.members.map((m) => `
@@ -527,6 +592,50 @@ function viewFamily() {
       icon: '📜', title: 'Zuletzt erledigt',
       body: recent.length ? `<ul class="recent">${recent.join('')}</ul>` : '<p class="hint">Noch nichts erledigt – die erste Aufgabe wartet auf der Heute-Seite.</p>',
     })}`;
+}
+
+// Wer hat wie viel zum Familienziel beigetragen – und wer spendiert?
+function goalRanking(g, total) {
+  if (state.members.length < 2) return '';
+  const rows = state.members
+    .map((m) => ({ m, pts: memberPoints(state, m.id, g.since) }))
+    .sort((a, b) => b.pts - a.pts);
+  const max = Math.max(1, rows[0].pts);
+  const medals = ['🥇', '🥈', '🥉'];
+  const list = rows.map(({ m, pts }, i) => `
+    <li class="${m.id === state.currentMember ? 'me' : ''}">
+      <span class="rank">${pts > 0 && i < 3 ? medals[i] : `${i + 1}.`}</span>
+      <span class="avatar small">${m.emoji}</span>
+      <span class="rank-body">
+        <span class="rank-name">${esc(m.name)}<b>${pts}</b></span>
+        <span class="rank-bar"><span style="width:${(pts / max) * 100}%"></span></span>
+      </span>
+      <small>${total ? Math.round((pts / total) * 100) : 0} %</small>
+    </li>`).join('');
+  let pays = '';
+  if (g.loserPays !== false && total > 0) {
+    const low = rows[rows.length - 1].pts;
+    const losers = rows.filter((r) => r.pts === low).map((r) => `${r.m.emoji} ${esc(r.m.name)}`);
+    const names = losers.length > 1 ? `${losers.slice(0, -1).join(', ')} & ${losers[losers.length - 1]}` : losers[0];
+    pays = g.reachedAt
+      ? `<p class="loser done">🎉 Ziel erreicht! ${names} ${losers.length > 1 ? 'spendieren' : 'spendiert'}: <b>${esc(g.title)}</b></p>`
+      : `<p class="loser">🍕 Stand jetzt ${losers.length > 1 ? 'spendieren' : 'spendiert'} ${names} – noch ist Zeit, aufzuholen!</p>`;
+  }
+  return `<ol class="ranking">${list}</ol>${pays}`;
+}
+
+function badgeCard(key) {
+  const badges = badgesFor(state, me().id, key);
+  const earned = badges.filter((b) => b.earned).length;
+  return section({
+    icon: '🏅', title: 'Deine Abzeichen', meta: `${earned} von ${badges.length} gesammelt`,
+    body: `<div class="badges">${badges.map((b) => `
+      <div class="badge-item ${b.earned ? 'earned' : ''}" title="${esc(b.text)}">
+        <span class="badge-icon">${b.icon}</span>
+        <b>${esc(b.title)}</b>
+        <small>${b.earned ? esc(b.text) : `${b.value}/${b.goal} · ${esc(b.text)}`}</small>
+      </div>`).join('')}</div>`,
+  });
 }
 
 // ---------- Ansicht: Einstellungen ----------
@@ -639,6 +748,7 @@ function viewSettings() {
       body: `
         <div class="row"><input type="text" maxlength="80" value="${esc(state.goal.title)}" data-goal="title" aria-label="Belohnung"></div>
         <div class="row"><label>bei <input type="number" min="50" step="50" value="${state.goal.points}" data-goal="points"> Punkten</label></div>
+        <label class="check-line"><input type="checkbox" data-goal="loserPays" ${state.goal.loserPays !== false ? 'checked' : ''}> 🍕 Wer am wenigsten beiträgt, spendiert die Belohnung</label>
         <button class="btn ghost" data-action="new-goal">Ziel neu starten (Punkte ab heute zählen)</button>`,
     })}
     ${section({ icon: '🏠', title: 'Räume benennen', meta: 'z. B. „Lenas Zimmer“ statt „Kinderzimmer 1“', body: roomsEdit })}
@@ -933,6 +1043,7 @@ document.addEventListener('focusout', () => setTimeout(() => {
 let remoteTimer = null;
 function onSyncChange(ev) {
   if (ev.type === 'remote') notifyRemote(ev);
+  if (ev.type === 'reload') cleanupClaims(state, today());
   if (ev.type === 'rejected' && ev.kind === 'waste') {
     toast('🗑️ Der Abfallkalender ist erst auf diesem Handy. Für die ganze Familie bitte den Datenbank-Nachtrag aus SUPABASE.md ausführen.', 7000);
   }
@@ -1000,12 +1111,30 @@ function clearJoinHash() {
 // ---------- Ereignisse ----------
 
 document.addEventListener('click', (ev) => {
-  const el = ev.target.closest('[data-task],[data-assign],[data-waste],[data-send-waste],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
+  const el = ev.target.closest('[data-task],[data-assign],[data-waste],[data-claim],[data-claim-waste],[data-send-waste],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
   if (!el || el.matches('input')) return;
   const d = el.dataset;
   if (d.task) return complete(d.task, ev);
   if (d.assign) return completeAssignment(d.assign, ev);
   if (d.waste) return completeWaste(d.waste, ev);
+  if (d.claim || d.claimWaste) {
+    let item;
+    let points;
+    if (d.claim) {
+      item = { taskId: d.claim };
+      points = pointsFor(task(d.claim));
+    } else {
+      const e = state.waste?.events.find((x) => `${x.d}|${x.t}` === d.claimWaste);
+      if (!e) return;
+      item = { title: `${e.t} rausstellen` };
+      points = WASTE_POINTS;
+    }
+    const result = toggleClaim(state, item, today(), me().id, points);
+    if (result === 'claimed') toast('🙋 Übernommen – die anderen sehen, dass du das machst.');
+    else if (result === 'taken') toast('Das hat schon jemand anderes übernommen.');
+    navigator.vibrate?.(20);
+    return render();
+  }
   if (d.sendWaste) {
     const e = state.waste?.events.find((x) => `${x.d}|${x.t}` === d.sendWaste);
     if (e) return openSheet({ type: 'send', title: `${e.t} rausstellen`, due: today(), effort: 2 });
@@ -1208,6 +1337,7 @@ document.addEventListener('change', (ev) => {
     saveTask(state, t);
   } else if (d.goal) {
     if (d.goal === 'title') state.goal.title = el.value.trim() || 'Familienbelohnung';
+    else if (d.goal === 'loserPays') state.goal.loserPays = el.checked;
     else state.goal.points = Math.max(50, +el.value || 1000);
     saveSettings(state);
   } else if (el.id === 'push-waste' || el.id === 'push-hour') {
@@ -1387,6 +1517,7 @@ let lastDay = today();
 setInterval(() => {
   if (today() !== lastDay) {
     lastDay = today();
+    cleanupClaims(state, today());
     if (!timer) softRender();
   }
 }, 60000);
@@ -1400,6 +1531,8 @@ if (inviteCode && sync.syncConfigured()) {
   if (state.sync?.inviteCode === inviteCode) clearJoinHash();
   else sheet = { type: 'join', code: inviteCode };
 }
+
+cleanupClaims(state, today());
 
 sync.start({
   getState: () => state,

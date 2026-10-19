@@ -2,6 +2,7 @@
 // wird jede Änderung zusätzlich als „Op“ an den Sync weitergereicht.
 import { ROOMS, POINTS, defaultTasks, buildPlan, dateKey, addDays, dayNum } from './planner.js';
 import { WASTE_POINTS, wasteDone } from './waste.js';
+import { MILESTONES, milestoneTitle, personalStreak, isClaim } from './rewards.js';
 
 const KEY = 'wisch-wanda-v1';
 const PLAN_KEEP_DAYS = 14;
@@ -209,6 +210,57 @@ export function toggleAssignment(state, id, key, memberId) {
     { kind: 'assignment', op: 'upsert', value: a },
   ]);
   return entry;
+}
+
+// ---------- Serie: Bonuspunkte an Meilensteinen ----------
+
+// Nach jedem Abhaken aufrufen: vergibt fällige Boni der aktuellen Serie und nimmt
+// einen heute vergebenen Bonus zurück, wenn die Erledigung rückgängig gemacht wurde.
+export function syncStreakBonus(state, memberId, key) {
+  const s = personalStreak(state.history, memberId, key);
+  const ops = [];
+  let awarded = null;
+  for (const m of MILESTONES) {
+    const title = milestoneTitle(m.days);
+    const existing = state.history.find((h) => h.member === memberId && h.title === title && !h.taskId && s.start && h.date >= s.start);
+    if (s.streak >= m.days && s.doneToday && !existing) {
+      awarded = { id: newId(), taskId: null, title, date: key, member: memberId, points: m.points };
+      state.history.push(awarded);
+      ops.push({ kind: 'completion', op: 'upsert', value: awarded });
+    } else if (existing && existing.date === key && (s.streak < m.days || !s.doneToday)) {
+      state.history = state.history.filter((h) => h !== existing);
+      ops.push({ kind: 'completion', op: 'delete', value: existing.id });
+    }
+  }
+  if (ops.length) push(state, ops);
+  return awarded;
+}
+
+// ---------- „Übernehme ich“ ----------
+// Eine Übernahme ist eine Zuschickung an sich selbst für den heutigen Tag.
+
+export function claimOf(state, { taskId = null, title = null }, key) {
+  return state.assignments.find((a) => isClaim(a) && a.due === key
+    && (taskId ? a.taskId === taskId : !a.taskId && a.title === title));
+}
+
+// Gibt 'claimed', 'released' oder 'taken' (schon jemand anderes) zurück.
+export function toggleClaim(state, item, key, memberId, points) {
+  const existing = claimOf(state, item, key);
+  if (existing && existing.to !== memberId) return 'taken';
+  if (existing) {
+    deleteAssignment(state, existing.id);
+    return 'released';
+  }
+  addAssignment(state, { to: memberId, from: memberId, taskId: item.taskId || null, title: item.taskId ? null : item.title, points, due: key });
+  return 'claimed';
+}
+
+// Übernahmen von gestern, die liegen geblieben sind, verfallen.
+export function cleanupClaims(state, key) {
+  const stale = state.assignments.filter((a) => isClaim(a) && !a.doneAt && a.due && a.due < key);
+  for (const a of stale) deleteAssignment(state, a.id);
+  return stale.length;
 }
 
 // ---------- Abfallkalender ----------

@@ -15,7 +15,10 @@ jede Woche ein Raum gründlich – mit Punkten, Serien und einem gemeinsamen Fam
 
 - **Aufgabenkatalog mit Intervallen:** Jede Aufgabe weiß, wann sie zuletzt erledigt wurde, und wird automatisch wieder eingeplant.
 - **Punkte nach Unbeliebtheit:** Kleinigkeit 5 · Geht so 10 · Lästig 20 · Unbeliebt 35 · Endgegner 50.
-- **Serie & Joker:** Alle 7 aktiven Tage gibt es einen Joker (max. 3), der einen verpassten Tag rettet.
+- **Persönliche Serie & Joker:** Jede Person hat ihre eigene Serie. Alle 7 aktiven Tage gibt es einen Joker (max. 3), der einen verpassten Tag rettet. Bonuspunkte bei 3, 7, 14, 30, 60, 100, 200 und 365 Tagen.
+- **Abzeichen:** z. B. Endgegner besiegt, Hunde-Held, Tonnen-Profi, Ecken-Jäger – mit Fortschrittsanzeige.
+- **🙋 Übernehme ich:** Der Tagesplan gilt für die ganze Familie; jede Person markiert, was sie übernimmt.
+- **Rangliste zum Familienziel:** Wer hat wie viel beigetragen – wer am wenigsten hat, spendiert (abschaltbar).
 - **„Nur 15 Minuten“:** gekürzter Plan für Tage mit wenig Energie.
 - **Räume-Ampel**, **Familienziel**, **Level** und Verlauf.
 - **Abfallkalender:** aus der Schichtplaner-Sicherung übernehmen oder .ics-Datei vom Entsorger laden. Am Vorabend erscheint „Gelbe Tonne rausstellen“ – mit Punkten und zum Zuschicken.
