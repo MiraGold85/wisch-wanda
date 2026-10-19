@@ -68,14 +68,14 @@ test('Nur verbundene Familien schicken Änderungen an den Sync', () => {
 });
 
 test('Raum-Besitz: Standard privat, „Lenas Zimmer“, gemeinsam machen', async () => {
-  const { isPrivateRoom, roomOwner, roomName, setRoomOwner, privateRooms, unassignedPrivateRooms } = await import('../js/store.js');
+  const { isPrivateRoom, roomOwners, roomName, setRoomOwner, privateRooms, unassignedPrivateRooms } = await import('../js/store.js');
   const { state } = setup();
   assert.deepEqual(unassignedPrivateRooms(state), ['kind1', 'kind2', 'schlafzimmer']);
   assert.equal(isPrivateRoom(state, 'kueche'), false);
   setRoomOwner(state, 'kind1', 'lena');
   state.members.push({ id: 'jonas', name: 'Jonas', emoji: '👦' });
   setRoomOwner(state, 'kind2', 'jonas');
-  assert.equal(roomOwner(state, 'kind1'), 'lena');
+  assert.deepEqual(roomOwners(state, 'kind1'), ['lena'], 'alte Einzel-Einträge werden verstanden');
   assert.equal(roomName(state, 'kind1'), 'Lenas Zimmer');
   assert.equal(roomName(state, 'kind2'), 'Jonas’ Zimmer');
   setRoomOwner(state, 'schlafzimmer', 'shared');
@@ -83,4 +83,23 @@ test('Raum-Besitz: Standard privat, „Lenas Zimmer“, gemeinsam machen', async
   // der heutige Plan wurde ohne private Räume neu erstellt
   const plan = Object.values(state.plans)[0];
   assert.ok(plan.rounds.every((r) => !['kind1', 'kind2'].includes(r.room)));
+});
+
+test('Elternschlafzimmer gehört zwei Personen', async () => {
+  const { toggleRoomOwner, roomOwners, ownedRooms, isPrivateRoom, unassignedPrivateRooms } = await import('../js/store.js');
+  const { state } = setup();
+  state.members.push({ id: 'papa', name: 'Papa', emoji: '👨' });
+  toggleRoomOwner(state, 'schlafzimmer', 'mama');
+  toggleRoomOwner(state, 'schlafzimmer', 'papa');
+  assert.deepEqual(roomOwners(state, 'schlafzimmer'), ['mama', 'papa']);
+  assert.deepEqual(ownedRooms(state, 'papa'), ['schlafzimmer']);
+  assert.deepEqual(ownedRooms(state, 'lena'), []);
+  toggleRoomOwner(state, 'schlafzimmer', 'papa');
+  assert.deepEqual(roomOwners(state, 'schlafzimmer'), ['mama']);
+  toggleRoomOwner(state, 'schlafzimmer', 'mama');
+  assert.ok(unassignedPrivateRooms(state).includes('schlafzimmer'), 'niemand mehr → wieder offen');
+  toggleRoomOwner(state, 'schlafzimmer', 'shared');
+  assert.equal(isPrivateRoom(state, 'schlafzimmer'), false);
+  toggleRoomOwner(state, 'schlafzimmer', 'papa');
+  assert.deepEqual(roomOwners(state, 'schlafzimmer'), ['papa'], 'aus „gemeinsam“ wird privat');
 });

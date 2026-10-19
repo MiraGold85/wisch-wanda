@@ -25,7 +25,7 @@ export function freshState(today = dateKey()) {
     createdAt: today,
     tasks: defaultTasks(today),
     roomNames: {},
-    roomOwners: {}, // Raum → Person (privat) oder 'shared'; ohne Eintrag gilt DEFAULT_PRIVATE
+    roomOwners: {}, // Raum → Liste der Besitzer (privat) oder 'shared'; ohne Eintrag gilt DEFAULT_PRIVATE
     members: [{ id: 'm1', name: 'Mama', emoji: '👩' }],
     currentMember: 'm1',
     history: [],
@@ -73,8 +73,9 @@ export function save(state) {
 
 export function roomName(state, id) {
   if (state.roomNames[id]) return state.roomNames[id];
-  // Kinderzimmer ohne eigenen Namen heißen nach der Besitzerin: „Lenas Zimmer“, „Jonas' Zimmer“
-  const owner = state.members.find((m) => m.id === roomOwner(state, id));
+  // Kinderzimmer ohne eigenen Namen heißen nach der Besitzerin: „Lenas Zimmer“, „Jonas’ Zimmer“
+  const owners = roomOwners(state, id);
+  const owner = owners.length === 1 && state.members.find((m) => m.id === owners[0]);
   if (owner && id.startsWith('kind')) return `${owner.name}${/[sxzß]$/i.test(owner.name) ? '’' : 's'} Zimmer`;
   return ROOMS.find((r) => r.id === id)?.name || id;
 }
@@ -86,16 +87,25 @@ export function isPrivateRoom(state, id) {
   return o === undefined ? DEFAULT_PRIVATE.includes(id) : o !== 'shared';
 }
 
-// Besitzerin eines privaten Raums (oder null, wenn gemeinsam oder noch niemand zugeordnet)
-export function roomOwner(state, id) {
+// Besitzer eines privaten Raums (leer, wenn gemeinsam oder noch niemand zugeordnet).
+// Früher war es eine einzelne Person – das wird weiterhin verstanden.
+export function roomOwners(state, id) {
   const o = state.roomOwners?.[id];
-  return o && o !== 'shared' && state.members.some((m) => m.id === o) ? o : null;
+  if (!o || o === 'shared') return [];
+  return (Array.isArray(o) ? o : [o]).filter((mid) => state.members.some((m) => m.id === mid));
 }
 
 export const privateRooms = (state) => ROOMS.map((r) => r.id).filter((id) => isPrivateRoom(state, id));
-export const ownedRooms = (state, memberId) => privateRooms(state).filter((id) => roomOwner(state, id) === memberId);
+export const ownedRooms = (state, memberId) => privateRooms(state).filter((id) => roomOwners(state, id).includes(memberId));
 // Private Räume, die noch niemandem gehören
-export const unassignedPrivateRooms = (state) => privateRooms(state).filter((id) => !roomOwner(state, id));
+export const unassignedPrivateRooms = (state) => privateRooms(state).filter((id) => !roomOwners(state, id).length);
+
+// Person als Besitzer an- oder abwählen bzw. den Raum gemeinsam machen ('shared').
+export function toggleRoomOwner(state, id, who) {
+  if (who === 'shared') return setRoomOwner(state, id, 'shared');
+  const now = roomOwners(state, id);
+  return setRoomOwner(state, id, now.includes(who) ? now.filter((m) => m !== who) : [...now, who]);
+}
 
 // Besitz ändern; der heutige Plan wird neu erstellt, damit die Runde sofort stimmt.
 export function setRoomOwner(state, id, owner) {

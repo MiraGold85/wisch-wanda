@@ -1,5 +1,5 @@
 // Offline-Fähigkeit: App-Dateien zwischenspeichern, Netzwerk bevorzugen.
-const CACHE = 'wisch-wanda-v11';
+const CACHE = 'wisch-wanda-v12';
 const FILES = [
   './', 'index.html', 'css/styles.css', 'js/app.js', 'js/planner.js', 'js/store.js', 'js/sync.js', 'js/waste.js', 'js/push.js', 'js/rewards.js', 'js/config.js',
   'js/vendor/supabase.js', 'manifest.webmanifest', 'icons/wanda.svg', 'icons/icon.svg', 'icons/icon-180.png',

@@ -414,9 +414,13 @@ input[type="number"] { width: 72px; }
 .room.private { opacity: .8; }
 .badge.mine { background: var(--brand-soft); color: var(--brand); }
 .own-room { border: 2px solid color-mix(in srgb, var(--brand) 40%, transparent); }
-.owner-row { flex-wrap: wrap; row-gap: 4px; }
-.owner-row .owner-room { flex: 1 1 auto; min-width: 0; font-weight: 600; }
-.owner-row select { flex: 1 1 100%; min-width: 0; }
+.owner-block { display: grid; gap: 6px; padding: 6px 0; }
+.owner-room { font-weight: 700; }
+.owner-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.owner-chip {
+  border: 2px solid var(--line); background: var(--card); border-radius: 999px;
+  padding: 6px 12px; font-size: 14px; font-weight: 600;
+}
+.owner-chip.active { border-color: var(--brand); background: var(--brand-soft); color: var(--brand); }
 .room-edit { display: grid; gap: 6px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
 .owner-line { padding-left: 40px; }
-.owner-line select { width: 100%; }

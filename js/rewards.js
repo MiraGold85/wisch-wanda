@@ -31,7 +31,7 @@ function roomsFor(state, memberId) {
     if (id === 'alltag') return false;
     const o = state.roomOwners?.[id];
     const isPrivate = o === undefined ? DEFAULT_PRIVATE.includes(id) : o !== 'shared';
-    return !isPrivate || o === memberId;
+    return !isPrivate || [].concat(o ?? []).includes(memberId);
   });
 }
 

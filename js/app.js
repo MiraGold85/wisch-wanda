@@ -7,7 +7,7 @@ import {
   effectiveTasks, setPusher, newId, addAssignment, deleteAssignment, toggleAssignment, assignmentTitle, assignmentPoints,
   saveMember, removeMember, saveTask, removeTask, saveSettings, setWaste, toggleWaste,
   syncStreakBonus, toggleClaim, claimOf, cleanupClaims,
-  isPrivateRoom, roomOwner, privateRooms, ownedRooms, unassignedPrivateRooms, setRoomOwner,
+  isPrivateRoom, roomOwners, privateRooms, ownedRooms, unassignedPrivateRooms, toggleRoomOwner,
 } from './store.js';
 import { personalStreak, nextMilestone, badgesFor, isClaim } from './rewards.js';
 import { importWaste, importFromSchichtplaner, wasteDue, wasteDone, nextPickups, wasteIcon, WASTE_POINTS } from './waste.js';
@@ -365,22 +365,28 @@ function ownTasks(key) {
   const rooms = ownedRooms(state, me().id);
   if (!rooms.length) return [];
   const doneHere = state.history
-    .filter((h) => h.date === key && h.member === me().id && rooms.includes(task(h.taskId)?.room))
+    .filter((h) => h.date === key && rooms.includes(task(h.taskId)?.room))
     .map((h) => h.taskId);
   const due = privateTasks(effectiveTasks(state), rooms, key, isQuick() ? 1 : 4).map((t) => t.id);
   return [...new Set([...doneHere, ...due])];
 }
 
-function ownerSelect(id, includeEmpty) {
-  const o = state.roomOwners?.[id];
-  return `<select data-room-owner="${id}" aria-label="Wem gehört der Raum?">
-    ${includeEmpty ? '<option value="" selected>Wem gehört das Zimmer? …</option>' : ''}
-    <option value="shared" ${!includeEmpty && !isPrivateRoom(state, id) ? 'selected' : ''}>👨‍👩‍👧 gemeinsam</option>
-    ${state.members.map((m) => `<option value="${esc(m.id)}" ${!includeEmpty && o === m.id ? 'selected' : ''}>🔒 ${m.emoji} ${esc(m.name)}</option>`).join('')}
-    ${!includeEmpty && isPrivateRoom(state, id) && !roomOwner(state, id) ? '<option value="" selected>🔒 privat – noch niemand</option>' : ''}
-  </select>`;
+// Besitz eines Raums: antippbare Knöpfe – mehrere Personen möglich (z. B. Elternschlafzimmer)
+function ownerChips(id) {
+  const owners = roomOwners(state, id);
+  const shared = !isPrivateRoom(state, id);
+  return `<div class="owner-chips">
+    <button class="owner-chip ${shared ? 'active' : ''}" data-owner-room="${id}" data-owner="shared">👨‍👩‍👧 gemeinsam</button>
+    ${state.members.map((m) => `<button class="owner-chip ${owners.includes(m.id) ? 'active' : ''}" data-owner-room="${id}" data-owner="${esc(m.id)}">${m.emoji} ${esc(m.name)}</button>`).join('')}
+  </div>`;
 }
 
+const namesOf = (ids) => {
+  const list = ids.map((mid) => member(mid)).filter(Boolean).map((m) => `${m.emoji} ${esc(m.name)}`);
+  return list.length > 1 ? `${list.slice(0, -1).join(', ')} & ${list[list.length - 1]}` : list[0] || '';
+};
+
+let ownerPromptRooms = null; // Räume, die die Abfrage „Wem gehört …“ gerade zeigt
 function viewToday() {
   const key = today();
   const full = planFor(state, key);
@@ -440,12 +446,15 @@ function viewToday() {
     }));
   }
   const unassigned = unassignedPrivateRooms(state);
-  if (unassigned.length) {
+  if (!ownerPromptRooms && unassigned.length) ownerPromptRooms = unassigned;
+  if (ownerPromptRooms) {
     cards.push(section({
       icon: '🔒', title: 'Wem gehört welches Zimmer?',
-      meta: 'Private Zimmer sind nicht in der gemeinsamen Runde. Wer ein Zimmer besitzt, bekommt es auf der eigenen Heute-Seite.',
-      body: unassigned.map((id) => `
-        <div class="row owner-row"><span class="row-emoji">${roomEmoji(id)}</span><span class="owner-room">${esc(roomName(state, id))}</span>${ownerSelect(id, true)}</div>`).join(''),
+      meta: 'Private Zimmer sind nicht in der gemeinsamen Runde. Wer ein Zimmer besitzt, bekommt es auf der eigenen Heute-Seite. Ein Zimmer kann auch mehreren gehören.',
+      body: `${ownerPromptRooms.map((id) => `
+        <div class="owner-block"><span class="owner-room">${roomEmoji(id)} ${esc(roomName(state, id))}</span>${ownerChips(id)}</div>`).join('')}
+        ${state.members.length < 2 ? '<p class="hint">Fehlt jemand? Personen kannst du unter Einstellungen → Familie hinzufügen.</p>' : ''}
+        <button class="btn" data-action="owners-done">Fertig ✓</button>`,
     }));
   }
   if (own.length || ownedRooms(state, me().id).length) {
@@ -516,16 +525,16 @@ function viewRooms() {
   const key = today();
   const focus = planFor(state, key).focusRoom;
   const tasks = effectiveTasks(state);
-  const visible = (id) => !isPrivateRoom(state, id) || roomOwner(state, id) === me().id;
+  const visible = (id) => !isPrivateRoom(state, id) || roomOwners(state, id).includes(me().id);
   const roomCards = ROOMS.map((r) => {
     if (!visible(r.id)) {
-      const owner = member(roomOwner(state, r.id));
+      const owners = roomOwners(state, r.id);
       return `
       <section class="card room private">
         <div class="room-head">
           <span class="dot private"></span>
           <span class="room-name">${r.emoji} ${esc(roomName(state, r.id))}</span>
-          <span class="room-meta">🔒 ${owner ? `gehört ${owner.emoji} ${esc(owner.name)}` : 'privat'}</span>
+          <span class="room-meta">🔒 ${owners.length ? `gehört ${namesOf(owners)}` : 'privat'}</span>
         </div>
       </section>`;
     }
@@ -790,7 +799,7 @@ function viewSettings() {
     <div class="room-edit">
       <div class="row"><span class="row-emoji">${r.emoji}</span>
         <input type="text" maxlength="40" value="${esc(roomName(state, r.id))}" data-room-name="${r.id}" aria-label="Raumname"></div>
-      <div class="row owner-line">${ownerSelect(r.id, false)}</div>
+      <div class="owner-line">${ownerChips(r.id)}</div>
     </div>`).join('');
 
   const effortOpts = (sel) => Object.entries(EFFORT_LABELS).map(([v, l]) => `<option value="${v}" ${+v === sel ? 'selected' : ''}>${l}</option>`).join('');
@@ -1183,12 +1192,16 @@ function clearJoinHash() {
 // ---------- Ereignisse ----------
 
 document.addEventListener('click', (ev) => {
-  const el = ev.target.closest('[data-task],[data-assign],[data-waste],[data-claim],[data-claim-waste],[data-send-waste],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
+  const el = ev.target.closest('[data-task],[data-assign],[data-waste],[data-owner-room],[data-claim],[data-claim-waste],[data-send-waste],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
   if (!el || el.matches('input')) return;
   const d = el.dataset;
   if (d.task) return complete(d.task, ev);
   if (d.assign) return completeAssignment(d.assign, ev);
   if (d.waste) return completeWaste(d.waste, ev);
+  if (d.ownerRoom) {
+    toggleRoomOwner(state, d.ownerRoom, d.owner);
+    return render();
+  }
   if (d.claim || d.claimWaste) {
     let item;
     let points;
@@ -1363,6 +1376,13 @@ document.addEventListener('click', (ev) => {
       return testPush(state.push.endpoint)
         .then(() => toast('Test unterwegs – gleich sollte eine Benachrichtigung kommen. 📬', 4000))
         .catch((e) => toast(`Test hat nicht geklappt: ${e.message}`, 5000));
+    case 'owners-done': {
+      const open = (ownerPromptRooms || []).filter((id) => isPrivateRoom(state, id) && !roomOwners(state, id).length);
+      if (open.length) return toast(`Bitte noch ${open.map((id) => roomName(state, id)).join(', ')} zuordnen – oder „gemeinsam“ antippen.`, 4000);
+      ownerPromptRooms = null;
+      toast('🔒 Gespeichert – die Raum-Runde enthält jetzt nur gemeinsame Räume.');
+      return render();
+    }
     case 'remove-waste':
       if (!confirm(`Abfallkalender „${state.waste.name}“ entfernen?`)) return;
       setWaste(state, null);
@@ -1395,12 +1415,6 @@ document.addEventListener('change', (ev) => {
     m.emoji = el.value;
     saveMember(state, m);
     document.getElementById('me-btn').textContent = me().emoji;
-  } else if (d.roomOwner) {
-    if (!el.value) return;
-    setRoomOwner(state, d.roomOwner, el.value);
-    const o = member(el.value);
-    toast(o ? `🔒 ${roomName(state, d.roomOwner)} gehört jetzt ${o.name}.` : `👨‍👩‍👧 ${roomName(state, d.roomOwner)} ist jetzt gemeinsam.`);
-    render();
   } else if (d.roomName) {
     const def = ROOMS.find((r) => r.id === d.roomName).name;
     const v = el.value.trim();
