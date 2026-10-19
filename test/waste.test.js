@@ -80,3 +80,28 @@ test('Abfalltermine aus der Schichtplaner-Sicherung – ohne Schichten oder ande
   assert.equal(importFromSchichtplaner({ imports: [backup.imports[1]] }, TODAY), null);
   assert.equal(importFromSchichtplaner({}, TODAY), null);
 });
+
+test('ICS-Varianten verschiedener Städte werden gelesen', () => {
+  const variants = {
+    'Leerzeichen und Kleinbuchstaben': 'begin:vcalendar\nbegin:vevent \ndtstart;value=date:20261020 \nsummary:Gelbe Tonne\nend:vevent \nend:vcalendar',
+    'Uhrzeit mit Zeitzone': 'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;TZID=Europe/Berlin:20261020T060000\r\nSUMMARY:Gelbe Tonne\r\nEND:VEVENT\r\nEND:VCALENDAR',
+    'Nur CR als Zeilenende': 'BEGIN:VCALENDAR\rBEGIN:VEVENT\rDTSTART:20261020\rSUMMARY:Gelbe Tonne\rEND:VEVENT\rEND:VCALENDAR',
+    'BOM am Anfang': '﻿BEGIN:VCALENDAR\nBEGIN:VEVENT\nDTSTART;VALUE=DATE:20261020\nSUMMARY:Gelbe Tonne\nEND:VEVENT\nEND:VCALENDAR',
+  };
+  for (const [label, ics] of Object.entries(variants)) {
+    const w = importWaste(ics, 'stadt.ics', TODAY);
+    assert.deepEqual(w.events, [{ d: '2026-10-20', t: 'Gelbe Tonne' }], label);
+  }
+});
+
+test('RDATE: Liste zusätzlicher Abholtage', () => {
+  const ics = 'BEGIN:VCALENDAR\nBEGIN:VEVENT\nDTSTART;VALUE=DATE:20261020\nRDATE;VALUE=DATE:20261103,20261117\nSUMMARY:Bioabfall\nEND:VEVENT\nEND:VCALENDAR';
+  assert.deepEqual(importWaste(ics, 'x.ics', TODAY).events.map((e) => e.d), ['2026-10-20', '2026-11-03', '2026-11-17']);
+});
+
+test('Vergangene Kalender: Info für eine verständliche Meldung', () => {
+  const ics = 'BEGIN:VCALENDAR\nBEGIN:VEVENT\nDTSTART;VALUE=DATE:20250310\nSUMMARY:Restmüll\nEND:VEVENT\nEND:VCALENDAR';
+  const w = importWaste(ics, 'alt.ics', TODAY);
+  assert.equal(w.events.length, 0);
+  assert.deepEqual(w.events.info, { found: 1, last: '2025-03-10' });
+});

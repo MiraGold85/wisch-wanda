@@ -21,7 +21,7 @@ export function wasteIcon(title) {
 const icsUnescape = (v) => v.replace(/\\n/gi, ' ').replace(/\\([,;\\])/g, '$1').trim();
 
 function parseICSDate(v) {
-  const m = v.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})\d{2}(Z)?)?/);
+  const m = v.trim().replace(/^(\d{4})-(\d{2})-(\d{2})/, '$1$2$3').match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})\d{0,2}(Z)?)?/i);
   if (!m) return null;
   if (m[4] && m[6]) {
     // UTC → lokales Datum
@@ -31,25 +31,29 @@ function parseICSDate(v) {
   return `${m[1]}-${m[2]}-${m[3]}`;
 }
 
+// Großzügig lesen: Städte und Entsorger schreiben ihre Dateien sehr unterschiedlich.
 export function parseICS(text) {
-  const lines = text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/);
+  const lines = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').replace(/\n[ \t]/g, '').split('\n');
   const events = [];
   let cur = null;
   let calName = null;
-  for (const line of lines) {
-    if (line === 'BEGIN:VEVENT') { cur = { ex: [] }; continue; }
-    if (line === 'END:VEVENT') { if (cur?.start) events.push(cur); cur = null; continue; }
+  for (const raw of lines) {
+    const line = raw.trim();
+    const upper = line.toUpperCase();
+    if (upper === 'BEGIN:VEVENT') { cur = { ex: [], extra: [] }; continue; }
+    if (upper === 'END:VEVENT') { if (cur?.start) events.push(cur); cur = null; continue; }
     const i = line.indexOf(':');
     if (i < 0) continue;
-    const name = line.slice(0, i).split(';')[0];
-    const value = line.slice(i + 1);
+    const name = line.slice(0, i).split(';')[0].toUpperCase();
+    const value = line.slice(i + 1).trim();
     if (!cur) { if (name === 'X-WR-CALNAME') calName = icsUnescape(value); continue; }
     if (name === 'SUMMARY') cur.title = icsUnescape(value);
     else if (name === 'DTSTART') cur.start = parseICSDate(value);
-    else if (name === 'RRULE') cur.rrule = Object.fromEntries(value.split(';').map((x) => x.split('=')));
+    else if (name === 'RRULE') cur.rrule = Object.fromEntries(value.toUpperCase().split(';').map((x) => x.split('=')));
     else if (name === 'EXDATE') value.split(',').forEach((v) => cur.ex.push(parseICSDate(v)));
+    else if (name === 'RDATE') value.split(',').forEach((v) => cur.extra.push(parseICSDate(v)));
   }
-  return { calName, events };
+  return { calName, events: events.filter((e) => e.start) };
 }
 
 const isoWeekday = (key) => ((dayNum(key) + 3) % 7) + 1; // 1 = Montag
@@ -58,7 +62,13 @@ const isoWeekday = (key) => ((dayNum(key) + 3) % 7) + 1; // 1 = Montag
 export function expandEvent(ev, from, to) {
   const start = ev.start;
   const r = ev.rrule;
-  if (!r) return start >= from && start <= to ? [start] : [];
+  const extra = (ev.extra || []).filter((d) => d && d >= from && d <= to && !ev.ex.includes(d));
+  if (!r) return [start, ...extra].filter((d) => d >= from && d <= to);
+  return [...expandRule(ev, r, from, to), ...extra];
+}
+
+function expandRule(ev, r, from, to) {
+  const start = ev.start;
   const interval = Number(r.INTERVAL || 1);
   const until = r.UNTIL ? parseICSDate(r.UNTIL) : to;
   const max = r.COUNT ? Number(r.COUNT) : 2000;
@@ -116,6 +126,9 @@ export function importWaste(text, fileName, todayKey) {
   }
   out.sort((a, b) => a.d.localeCompare(b.d) || a.t.localeCompare(b.t));
   const name = (calName || fileName.replace(/\.ics$/i, '') || 'Abfallkalender').slice(0, 60);
+  // Nur für die Rückmeldung: wie viele Termine in der Datei standen und bis wann
+  const all = events.map((e) => e.start).sort();
+  Object.defineProperty(out, 'info', { value: { found: events.length, last: all[all.length - 1] || null } });
   return { name, events: out };
 }
 

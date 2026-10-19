@@ -530,14 +530,18 @@ function viewFamily() {
 
 // ---------- Ansicht: Einstellungen ----------
 
+let wasteMessage = '';
+
 function wasteSettings() {
   const w = state.waste;
-  const upload = (label, cls) => `<label class="btn ${cls}">${label}<input type="file" accept=".ics,text/calendar,.json,application/json" id="waste-import" hidden></label>`;
+  const msg = wasteMessage ? `<p class="import-msg">${esc(wasteMessage)}</p>` : '';
+  const upload = (label, cls) => `<label class="btn ${cls}">${label}<input type="file" id="waste-import" hidden></label>`;
   if (!w) {
     return section({
       icon: '🗑️', title: 'Abfallkalender',
       meta: 'Wanda erinnert am Vorabend ans Rausstellen – mit Punkten und zum Zuschicken.',
       body: `
+        ${msg}
         ${upload('📅 Datei laden', '')}
         <p class="hint"><b>Aus dem Schichtplaner:</b> dort unter Einstellungen → „Sicherung“ eine Sicherungsdatei erstellen und hier laden. Wanda übernimmt daraus nur die Abfalltermine.</p>
         <p class="hint"><b>Oder</b> die Kalenderdatei (.ics) von der Webseite eurer Stadt bzw. eures Entsorgers.${state.sync ? ' Einmal laden reicht – die ganze Familie sieht den Kalender.' : ''}</p>`,
@@ -547,6 +551,7 @@ function wasteSettings() {
   return section({
     icon: '🗑️', title: 'Abfallkalender', meta: `${esc(w.name)} · ${w.events.length} Termine`,
     body: `
+      ${msg}
       <ul class="pickups">${next.map((e) => `<li><span>${wasteIcon(e.t)}</span><span>${esc(e.t)}</span><small>${e.d === today() ? 'heute' : e.d === addDays(today(), 1) ? 'morgen' : shortDate(e.d)}</small></li>`).join('') || '<li><span>ℹ️</span><span>Keine kommenden Termine – bitte neue Datei laden.</span></li>'}</ul>
       <div class="row wrap">
         ${upload('Neue Datei laden', 'ghost')}
@@ -1135,21 +1140,35 @@ document.addEventListener('change', (ev) => {
 
 async function importWasteFile(file) {
   if (!file) return;
+  const fail = (msg) => {
+    wasteMessage = `⚠️ ${msg}`;
+    render();
+    toast(msg, 6000);
+  };
   try {
     const text = await file.text();
     let w;
     if (text.trimStart().startsWith('{')) {
       w = importFromSchichtplaner(JSON.parse(text), today());
-      if (!w) return toast('In dieser Sicherung ist kein Abfallkalender enthalten.');
+      if (!w) return fail('In dieser Sicherung ist kein Abfallkalender enthalten.');
+    } else if (!/BEGIN:VCALENDAR|BEGIN:VEVENT/i.test(text)) {
+      return fail(`„${file.name}“ ist keine Kalenderdatei. Gesucht ist eine Datei mit der Endung .ics (oft „iCal“ oder „Kalender exportieren“ genannt).`);
     } else {
       w = importWaste(text, file.name, today());
+      const info = w.events.info;
+      if (!info?.found) return fail(`In „${file.name}“ stehen keine Termine.`);
+      if (!w.events.some((e) => e.d >= today())) {
+        return fail(`Die Termine in der Datei liegen alle in der Vergangenheit (letzter: ${info.last ? shortDate(info.last) + info.last.slice(0, 4) : '?'}). Vielleicht gibt es schon den Kalender fürs neue Jahr?`);
+      }
     }
-    if (!w.events.some((e) => e.d >= today())) return toast('In der Datei wurden keine kommenden Termine gefunden.');
     setWaste(state, w);
-    toast(`🗑️ ${w.events.filter((e) => e.d >= today()).length} Abholtermine aus „${w.name}“ geladen`);
+    const n = w.events.filter((e) => e.d >= today()).length;
+    wasteMessage = `✅ ${n} Abholtermine geladen${state.sync ? ' – die Familie sieht sie auch' : ''}.`;
+    toast(`🗑️ ${n} Abholtermine aus „${w.name}“ geladen`, 5000);
     render();
-  } catch {
-    toast('Die Datei konnte nicht gelesen werden.');
+  } catch (e) {
+    console.warn(e);
+    fail(`„${file.name}“ konnte nicht gelesen werden.`);
   }
 }
 

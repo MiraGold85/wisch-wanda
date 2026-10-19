@@ -357,3 +357,4 @@ input[type="number"] { width: 72px; }
 .pickups li { display: flex; gap: 10px; align-items: center; }
 .pickups li span:nth-child(2) { flex: 1; }
 .pickups small { color: var(--muted); }
+.import-msg { background: var(--brand-soft); border-radius: 12px; padding: 10px 12px; font-size: 14px; font-weight: 600; }
