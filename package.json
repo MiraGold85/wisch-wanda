@@ -1,0 +1,11 @@
+{
+  "name": "wisch-wanda",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Motivierende Haushalts-App für die ganze Familie",
+  "type": "module",
+  "scripts": {
+    "start": "npx serve -l 8080 .",
+    "test": "node --test test/*.test.js"
+  }
+}

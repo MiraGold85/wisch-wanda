@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <!-- Wanda: ein fröhlicher Schwamm mit Kopftuch -->
+  <ellipse cx="60" cy="112" rx="34" ry="5" fill="#000" opacity=".12"/>
+  <rect x="22" y="34" width="76" height="74" rx="18" fill="#ffd166"/>
+  <rect x="22" y="34" width="76" height="22" rx="14" fill="#2bb673"/>
+  <rect x="22" y="46" width="76" height="10" fill="#2bb673"/>
+  <path d="M26 40 Q60 6 94 40 Z" fill="#ef6f6c"/>
+  <circle cx="44" cy="25" r="3.5" fill="#fff" opacity=".85"/>
+  <circle cx="60" cy="19" r="3.5" fill="#fff" opacity=".85"/>
+  <circle cx="76" cy="25" r="3.5" fill="#fff" opacity=".85"/>
+  <path d="M92 34 q14 -4 16 6 q-10 2 -16 -2 Z" fill="#ef6f6c"/>
+  <circle cx="34" cy="72" r="3" fill="#e9b949"/><circle cx="84" cy="94" r="3.5" fill="#e9b949"/>
+  <circle cx="80" cy="66" r="2.5" fill="#e9b949"/><circle cx="38" cy="98" r="2.5" fill="#e9b949"/>
+  <ellipse cx="47" cy="74" rx="6" ry="7" fill="#fff"/>
+  <ellipse cx="73" cy="74" rx="6" ry="7" fill="#fff"/>
+  <circle cx="48" cy="75" r="3.5" fill="#33302e"/>
+  <circle cx="74" cy="75" r="3.5" fill="#33302e"/>
+  <circle cx="49.3" cy="73.5" r="1.2" fill="#fff"/>
+  <circle cx="75.3" cy="73.5" r="1.2" fill="#fff"/>
+  <circle cx="38" cy="86" r="5" fill="#ef6f6c" opacity=".35"/>
+  <circle cx="82" cy="86" r="5" fill="#ef6f6c" opacity=".35"/>
+  <path d="M50 87 Q60 97 70 87" stroke="#33302e" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+  <path d="M100 58 l3 -7 l3 7 l7 3 l-7 3 l-3 7 l-3 -7 l-7 -3 Z" fill="#fff" stroke="#ffd166" stroke-width="1.5"/>
+</svg>
