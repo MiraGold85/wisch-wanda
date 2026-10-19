@@ -119,6 +119,28 @@ export function importWaste(text, fileName, todayKey) {
   return { name, events: out };
 }
 
+// Liest die Datensicherung des Schichtplaners und übernimmt nur die
+// importierten Abfallkalender – Schichten usw. bleiben außen vor.
+export function importFromSchichtplaner(data, todayKey) {
+  const from = addDays(todayKey, -7);
+  const imports = (Array.isArray(data?.imports) ? data.imports : []).filter((imp) => Array.isArray(imp.events));
+  const isWaste = (imp) => imp.events.filter((e) => wasteIcon(String(e.t || '')) !== '🗑️').length >= imp.events.length / 2;
+  const chosen = imports.filter(isWaste);
+  if (!chosen.length) return null;
+  const seen = new Set();
+  const events = [];
+  for (const imp of chosen) {
+    for (const e of imp.events) {
+      const t = String(e.t || 'Abfuhr').slice(0, 60);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(e.d) || e.d < from || seen.has(`${e.d}|${t}`)) continue;
+      seen.add(`${e.d}|${t}`);
+      events.push({ d: e.d, t });
+    }
+  }
+  events.sort((a, b) => a.d.localeCompare(b.d) || a.t.localeCompare(b.t));
+  return { name: chosen.map((imp) => imp.name).join(' + ').slice(0, 60) || 'Abfallkalender', events };
+}
+
 export const pickupsOn = (waste, key) => (waste?.events || []).filter((e) => e.d === key);
 
 export function nextPickups(waste, todayKey, count = 6) {

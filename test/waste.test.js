@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { importWaste, wasteDue, wasteDone, wasteIcon, nextPickups } from '../js/waste.js';
+import { importWaste, importFromSchichtplaner, wasteDue, wasteDone, wasteIcon, nextPickups } from '../js/waste.js';
 import { freshState, toggleWaste, addAssignment, toggleAssignment, setPusher } from '../js/store.js';
 
 const TODAY = '2026-10-19'; // Montag
@@ -60,4 +60,23 @@ test('Zugeschickte Tonne: Erledigen über die Müll-Karte schließt die Zuweisun
   const b = addAssignment(s2, { to: 'jonas', from: 'm1', title: 'Gelbe Tonne rausstellen', points: 10 });
   toggleAssignment(s2, b.id, TODAY, 'jonas');
   assert.ok(wasteDone(s2.history, wasteDue(s2.waste, TODAY)[0]));
+});
+
+test('Abfalltermine aus der Schichtplaner-Sicherung – ohne Schichten oder andere Kalender', () => {
+  const backup = {
+    employers: [{ id: 'e1', name: 'Firma', wage: 14 }],
+    shifts: [{ id: 's1', date: '2026-10-20' }],
+    imports: [
+      { id: 'i1', name: 'Abfuhrkalender 2026', events: [
+        { d: '2026-10-01', t: 'Restmüll' }, { d: '2026-10-20', t: 'Gelbe Tonne' }, { d: '2026-10-22', t: 'Restmüll' },
+      ] },
+      { id: 'i2', name: 'Schulferien', events: [{ d: '2026-10-26', t: 'Herbstferien' }] },
+    ],
+  };
+  const w = importFromSchichtplaner(backup, TODAY);
+  assert.equal(w.name, 'Abfuhrkalender 2026');
+  assert.deepEqual(w.events, [{ d: '2026-10-20', t: 'Gelbe Tonne' }, { d: '2026-10-22', t: 'Restmüll' }]);
+  assert.deepEqual(Object.keys(w), ['name', 'events']);
+  assert.equal(importFromSchichtplaner({ imports: [backup.imports[1]] }, TODAY), null);
+  assert.equal(importFromSchichtplaner({}, TODAY), null);
 });

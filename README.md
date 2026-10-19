@@ -18,7 +18,7 @@ jede Woche ein Raum gründlich – mit Punkten, Serien und einem gemeinsamen Fam
 - **Serie & Joker:** Alle 7 aktiven Tage gibt es einen Joker (max. 3), der einen verpassten Tag rettet.
 - **„Nur 15 Minuten“:** gekürzter Plan für Tage mit wenig Energie.
 - **Räume-Ampel**, **Familienziel**, **Level** und Verlauf.
-- **Abfallkalender:** .ics-Datei vom Entsorger laden (wie im Schichtplaner). Am Vorabend erscheint „Gelbe Tonne rausstellen“ – mit Punkten und zum Zuschicken.
+- **Abfallkalender:** aus der Schichtplaner-Sicherung übernehmen oder .ics-Datei vom Entsorger laden. Am Vorabend erscheint „Gelbe Tonne rausstellen“ – mit Punkten und zum Zuschicken.
 
 ## Familie verbunden
 
