@@ -19,19 +19,29 @@ jede Woche ein Raum gründlich – mit Punkten, Serien und einem gemeinsamen Fam
 - **„Nur 15 Minuten“:** gekürzter Plan für Tage mit wenig Energie.
 - **Räume-Ampel**, **Familienziel**, **Level** und Verlauf.
 
+## Familie verbunden
+
+- **Familie gründen / beitreten:** Eine Person gründet, alle anderen treten per Einladungslink oder Code bei – ohne Passwort.
+- **Aufgaben zuschicken:** aus dem Katalog oder frei formuliert, mit Termin und Nachricht. Die Empfängerin sieht sie unter „Für dich“.
+- **Live:** Erledigungen, neue Aufgaben und Einstellungen erscheinen sofort auf allen Handys.
+- **Offline-fest:** Ohne Netz wird weiter abgehakt; Änderungen werden nachgereicht, sobald wieder Verbindung besteht.
+
+Einrichtung: siehe [SUPABASE.md](SUPABASE.md). Ohne Einrichtung läuft die App rein lokal.
+
 ## Ausprobieren
 
 ```bash
 npm start      # öffnet die App auf http://localhost:8080
-npm test       # Tests der Planungslogik
+npm test       # Tests der Planungs- und Datenlogik
 ```
 
-Keine Abhängigkeiten, kein Build-Schritt – reines HTML, CSS und JavaScript.
+Kein Build-Schritt – reines HTML, CSS und JavaScript. Die Supabase-Bibliothek liegt fertig gebündelt in `js/vendor/`.
 Die App ist eine PWA und lässt sich auf Android („Zum Startbildschirm hinzufügen“)
 und iPhone (Safari → Teilen → „Zum Home-Bildschirm“) installieren.
 
 ## Fahrplan
 
 - [x] **Stufe 1:** Tagesplan, Rotation, Raum-Timer, Aufgabenkatalog, Punkte, Serien (Daten lokal auf dem Gerät)
-- [ ] **Stufe 2:** Familien-Sync (Konten, Einladungslink, Aufgaben zuweisen, Benachrichtigungen)
+- [x] **Stufe 2:** Familien-Sync (Einladungslink, Aufgaben zuschicken, Live-Aktualisierung)
+- [ ] **Stufe 2b:** Push-Benachrichtigungen, auch wenn die App geschlossen ist
 - [ ] **Stufe 3:** Belohnungsshop, Vorher/Nachher-Fotos, Wochenstatistik

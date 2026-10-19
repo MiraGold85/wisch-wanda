@@ -266,6 +266,64 @@ input[type="number"] { width: 72px; }
 .onboarding > p:first-of-type { text-align: center; }
 .wanda-big { width: 120px; height: 120px; justify-self: center; animation: bob 2.4s ease-in-out infinite; }
 
+/* ---------- Familie & Zuschicken ---------- */
+
+.sync-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: 3px; background: var(--muted); }
+.sync-dot[hidden] { display: none; }
+.sync-dot.ok { background: var(--green); }
+.sync-dot.pending { background: var(--yellow); }
+.sync-dot.offline { background: var(--muted); }
+
+.task-wrap { display: flex; gap: 6px; align-items: stretch; }
+.task-wrap .task { flex: 1; min-width: 0; }
+.send-btn {
+  flex: none; width: 44px; border: 1px solid var(--line); background: var(--card);
+  border-radius: 14px; font-size: 18px; color: var(--muted);
+}
+.task.static { cursor: default; }
+.task.static:active { transform: none; }
+.task.static .check { border-style: dashed; }
+.task.static.done .check { border-style: solid; }
+.for-you { border: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+.task-name small { font-size: 14px; }
+
+.invite {
+  display: grid; justify-items: center; gap: 2px; padding: 10px;
+  background: var(--brand-soft); border-radius: 14px;
+}
+.invite span { font-size: 13px; color: var(--muted); }
+.invite b { font-size: 26px; letter-spacing: .12em; color: var(--brand); font-variant-numeric: tabular-nums; }
+.invite.big b { font-size: 34px; }
+
+.sheet { max-width: 520px; margin: 0 auto; display: grid; gap: 10px; }
+.sheet.center { text-align: center; }
+.sheet h2 { font-size: 22px; padding-right: 36px; }
+.sheet.center h2 { padding: 0; }
+.sheet h3 { font-size: 15px; margin-top: 6px; }
+.sheet h3 small { color: var(--muted); font-weight: 400; }
+.sheet .close { justify-self: end; font-size: 22px; margin-bottom: -40px; }
+.sheet .wanda-big { width: 90px; height: 90px; }
+.sheet select, .sheet input[type="text"] { width: 100%; }
+.sheet .who-btn { position: relative; cursor: pointer; }
+.sheet .who-btn input { position: absolute; opacity: 0; pointer-events: none; }
+.sheet .who-btn:has(input:checked) { border-color: var(--brand); background: var(--brand-soft); }
+
+.custom { display: none; gap: 8px; }
+.sheet:has(select[name="task"] option[value=""]:checked) .custom { display: grid; }
+
+.due-chips label { cursor: pointer; }
+.due-chips input { position: absolute; opacity: 0; pointer-events: none; }
+.due-chips span {
+  display: inline-block; padding: 7px 14px; border-radius: 999px;
+  border: 2px solid var(--line); font-weight: 600; font-size: 14px;
+}
+.due-chips input:checked + span { border-color: var(--brand); background: var(--brand-soft); color: var(--brand); }
+.due-chips input:focus-visible + span { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+.code-input { text-align: center; font-size: 26px !important; letter-spacing: .12em; text-transform: uppercase; font-weight: 800; }
+.warn { color: var(--accent); }
+.btn:disabled { opacity: .6; }
+
 /* ---------- Effekte ---------- */
 
 .toast {

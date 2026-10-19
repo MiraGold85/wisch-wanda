@@ -1,15 +1,20 @@
 import {
-  ROOMS, EFFORT_LABELS, HUNDE_CHECK, dateKey, addDays, dueRatio, daysUntilDue, pointsFor,
+  ROOMS, EFFORT_LABELS, POINTS, HUNDE_CHECK, dateKey, addDays, dueRatio, daysUntilDue, pointsFor,
   roomStatus, quickPlan, planTaskIds, computeStreak, levelFor, slug, MAX_JOKERS,
 } from './planner.js';
 import {
-  load, save, freshState, roomName, roomEmoji, planFor, doneEntry, toggleTask, memberPoints, familyPoints,
+  load, save, freshState, migrate, roomName, roomEmoji, planFor, doneEntry, toggleTask, memberPoints, familyPoints,
+  effectiveTasks, setPusher, newId, addAssignment, deleteAssignment, toggleAssignment, assignmentTitle, assignmentPoints,
+  saveMember, removeMember, saveTask, removeTask, saveSettings,
 } from './store.js';
+import * as sync from './sync.js';
 
 let state = load();
 let tab = 'heute';
 let openRoom = null;
 let timer = null; // { index, endAt, remaining, paused, finished }
+let sheet = null; // { type: 'send' | 'join' | 'create' | 'picker' | 'invite', ... }
+let busy = false;
 
 const $app = document.getElementById('app');
 const $overlay = document.getElementById('overlay');
@@ -17,22 +22,31 @@ const $toast = document.getElementById('toast');
 
 const MEMBER_EMOJIS = ['👩', '👨', '👧', '👦', '🧑', '👵', '👴', '🐶', '🦄', '🐱', '🌻', '⚡'];
 const ROUND_MINUTES = { normal: 7, quick: 5 };
+const WEEKDAYS = ['So.', 'Mo.', 'Di.', 'Mi.', 'Do.', 'Fr.', 'Sa.'];
 
 // ---------- Hilfen ----------
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const today = () => dateKey();
-const me = () => state.members.find((m) => m.id === state.currentMember) || state.members[0];
 const member = (id) => state.members.find((m) => m.id === id);
+const me = () => member(state.currentMember) || state.members[0] || { id: null, name: 'du', emoji: '🙂' };
 const task = (id) => state.tasks.find((t) => t.id === id);
 const isQuick = () => !!state.quickDays[today()];
 const pick = (list) => list[Math.floor(Math.random() * list.length)];
+const formatCode = (c) => (c ? `${c.slice(0, 4)}-${c.slice(4)}` : '');
+const who = (id) => {
+  const m = member(id);
+  return m ? `${m.emoji} ${esc(m.name)}` : 'jemand';
+};
 
 function mondayOf(key) {
-  // Montag der aktuellen Woche.
   const d = new Date(`${key}T12:00:00`);
-  const offset = (d.getDay() + 6) % 7;
-  return addDays(key, -offset);
+  return addDays(key, -((d.getDay() + 6) % 7));
+}
+
+function shortDate(key) {
+  const d = new Date(`${key}T12:00:00`);
+  return `${WEEKDAYS[d.getDay()]} ${key.slice(8)}.${key.slice(5, 7)}.`;
 }
 
 function greeting() {
@@ -55,11 +69,11 @@ const MORNING_LINES = [
   'Jede Kleinigkeit zählt – auch fünf Minuten.',
 ];
 
-function toast(text) {
+function toast(text, ms = 2200) {
   $toast.textContent = text;
   $toast.classList.add('show');
   clearTimeout(toast.t);
-  toast.t = setTimeout(() => $toast.classList.remove('show'), 2200);
+  toast.t = setTimeout(() => $toast.classList.remove('show'), ms);
 }
 
 function burst(x, y, big) {
@@ -99,22 +113,33 @@ function beep() {
   navigator.vibrate?.([200, 100, 200]);
 }
 
-// ---------- Aufgaben abhaken ----------
+// ---------- Abhaken ----------
+
+function celebrate(entry, big, ev) {
+  const rect = ev?.target?.closest('[data-task],[data-assign]')?.getBoundingClientRect();
+  if (rect) burst(rect.left + 28, rect.top + rect.height / 2, big);
+  toast(`+${entry.points} Punkte · ${big ? pick(BIG_CHEERS) : pick(CHEERS)}`);
+  navigator.vibrate?.(30);
+  checkGoal();
+}
 
 function complete(taskId, ev) {
   const t = task(taskId);
   if (!t) return;
+  const done = doneEntry(state, taskId, today());
+  if (done && done.member !== me().id && !confirm(`${member(done.member)?.name ?? 'Jemand'} hat „${t.name}“ heute schon erledigt. Wirklich rückgängig machen?`)) return;
   const entry = toggleTask(state, taskId, today(), me().id, pointsFor(t));
-  if (entry) {
-    const big = t.effort >= 4;
-    const rect = ev?.target?.closest('[data-task]')?.getBoundingClientRect();
-    if (rect) burst(rect.left + 28, rect.top + rect.height / 2, big);
-    toast(`+${entry.points} Punkte · ${big ? pick(BIG_CHEERS) : pick(CHEERS)}`);
-    navigator.vibrate?.(30);
-    checkGoal();
-  }
+  if (entry) celebrate(entry, t.effort >= 4, ev);
   render();
   if (timer) renderTimer();
+}
+
+function completeAssignment(id, ev) {
+  const a = state.assignments.find((x) => x.id === id);
+  if (!a) return;
+  const entry = toggleAssignment(state, id, today(), me().id);
+  if (entry) celebrate(entry, (task(a.taskId)?.effort ?? 0) >= 4 || entry.points >= 35, ev);
+  render();
 }
 
 function checkGoal() {
@@ -122,10 +147,10 @@ function checkGoal() {
   if (!g || g.reachedAt) return;
   if (familyPoints(state, g.since) >= g.points) {
     g.reachedAt = today();
-    save(state);
+    saveSettings(state);
     setTimeout(() => {
       burst(window.innerWidth / 2, window.innerHeight / 2, true);
-      toast(`🎉 Familienziel erreicht: ${g.title}!`);
+      toast(`🎉 Familienziel erreicht: ${g.title}!`, 4000);
     }, 500);
   }
 }
@@ -136,12 +161,11 @@ function taskRow(id, opts = {}) {
   const t = task(id);
   if (!t) return '';
   const done = doneEntry(state, id, today());
-  const who = done && member(done.member);
   const sub = [];
   if (opts.showRoom) sub.push(`${roomEmoji(t.room)} ${esc(roomName(state, t.room))}`);
-  if (done && who) sub.push(`erledigt von ${who.emoji} ${esc(who.name)}`);
-  else if (opts.showDue) sub.push(dueText(t));
-  return `
+  if (done) sub.push(`erledigt von ${who(done.member)}`);
+  else if (opts.due) sub.push(dueText(opts.due));
+  const row = `
     <button class="task ${done ? 'done' : ''} effort-${t.effort}" data-task="${esc(id)}">
       <span class="check" aria-hidden="true">${done ? '✓' : ''}</span>
       <span class="task-body">
@@ -150,6 +174,8 @@ function taskRow(id, opts = {}) {
       </span>
       <span class="pts" title="${EFFORT_LABELS[t.effort]}">+${pointsFor(t)}</span>
     </button>`;
+  if (!opts.send) return row;
+  return `<div class="task-wrap">${row}<button class="send-btn" data-send="${esc(id)}" aria-label="Aufgabe zuschicken" title="Jemandem zuschicken">📨</button></div>`;
 }
 
 function dueText(t) {
@@ -158,6 +184,38 @@ function dueText(t) {
   if (d === 0) return '<span class="late">heute fällig</span>';
   if (d === 1) return 'morgen fällig';
   return `fällig in ${d} Tagen`;
+}
+
+function deadline(due) {
+  if (!due) return '';
+  const k = today();
+  if (due < k) return `<span class="late">war bis ${shortDate(due)}</span>`;
+  if (due === k) return '<span class="late">bis heute</span>';
+  if (due === addDays(k, 1)) return 'bis morgen';
+  return `bis ${shortDate(due)}`;
+}
+
+function assignRow(a, opts = {}) {
+  const sub = [];
+  if (opts.showTo) sub.push(`an ${who(a.to)}`);
+  else if (a.from && a.from !== a.to) sub.push(`von ${who(a.from)}`);
+  if (a.doneAt) sub.push(`✓ erledigt${a.doneBy && a.doneBy !== a.to ? ` von ${who(a.doneBy)}` : ''}`);
+  else if (a.due) sub.push(deadline(a.due));
+  if (a.note) sub.push(`„${esc(a.note)}“`);
+  const t = task(a.taskId);
+  // In der Übersicht nur anzeigen – abhaken kann die Person selbst unter „Für dich“.
+  const tag = opts.showTo ? 'div' : 'button';
+  const check = `
+    <${tag} class="task assigned ${a.doneAt ? 'done' : ''} ${opts.showTo ? 'static' : ''} effort-${t?.effort ?? 2}" ${opts.showTo ? '' : `data-assign="${esc(a.id)}"`}>
+      <span class="check" aria-hidden="true">${a.doneAt ? '✓' : ''}</span>
+      <span class="task-body">
+        <span class="task-name">${esc(assignmentTitle(state, a))}${t ? ` <small>${roomEmoji(t.room)}</small>` : ''}</span>
+        <span class="task-sub">${sub.join(' · ')}</span>
+      </span>
+      <span class="pts">+${assignmentPoints(state, a)}</span>
+    </${tag}>`;
+  if (!opts.removable) return check;
+  return `<div class="task-wrap">${check}<button class="send-btn" data-unassign="${esc(a.id)}" aria-label="Zurückziehen" title="Zurückziehen">✕</button></div>`;
 }
 
 function section({ icon, title, meta, body, extra = '', cls = '' }) {
@@ -184,23 +242,34 @@ function progressRing(pct) {
 
 // ---------- Ansicht: Heute ----------
 
+function myAssignments() {
+  const k = today();
+  return state.assignments
+    .filter((a) => a.to === me().id && (!a.doneAt || a.doneAt === k))
+    .sort((a, b) => !!a.doneAt - !!b.doneAt || (a.due || '9999').localeCompare(b.due || '9999'));
+}
+
 function viewToday() {
   const key = today();
   const full = planFor(state, key);
   const plan = isQuick() ? quickPlan(full) : full;
   const ids = planTaskIds(plan);
-  const doneCount = ids.filter((id) => doneEntry(state, id, key)).length;
-  const pct = ids.length ? doneCount / ids.length : 0;
+  const mine = myAssignments();
+  const total = ids.length + mine.length;
+  const doneCount = ids.filter((id) => doneEntry(state, id, key)).length + mine.filter((a) => a.doneAt).length;
+  const pct = total ? doneCount / total : 0;
   const { streak, jokers, doneToday } = computeStreak(state.history, key);
   const todayPts = memberPoints(state, me().id, key);
-  const allDone = ids.length && doneCount === ids.length;
+  const allDone = total && doneCount === total;
   const mins = isQuick() ? ROUND_MINUTES.quick : ROUND_MINUTES.normal;
 
   const line = allDone
     ? 'Alles geschafft! Feierabend – du hast es dir verdient. 🛋️'
-    : doneCount
-      ? `${doneCount} von ${ids.length} erledigt. Weiter so!`
-      : MORNING_LINES[new Date().getDate() % MORNING_LINES.length];
+    : mine.some((a) => !a.doneAt)
+      ? `Du hast ${mine.filter((a) => !a.doneAt).length} zugeschickte ${mine.filter((a) => !a.doneAt).length === 1 ? 'Aufgabe' : 'Aufgaben'}. 📨`
+      : doneCount
+        ? `${doneCount} von ${total} erledigt. Weiter so!`
+        : MORNING_LINES[new Date().getDate() % MORNING_LINES.length];
 
   const hero = `
     <section class="hero">
@@ -214,14 +283,21 @@ function viewToday() {
         </div>
       </div>
       <div class="hero-ring">${progressRing(pct)}<span>${Math.round(pct * 100)}%</span></div>
-    </section>
+    </section>`;
+
+  const cards = [];
+  if (mine.length) {
+    cards.push(section({
+      icon: '📨', title: 'Für dich', meta: 'Aufgaben, die dir jemand zugeschickt hat', cls: 'for-you',
+      body: mine.map((a) => assignRow(a)).join(''),
+    }));
+  }
+  cards.push(`
     <label class="quick">
       <input type="checkbox" data-action="quick" ${isQuick() ? 'checked' : ''}>
       <span class="switch"></span>
       <span><b>Nur 15 Minuten heute</b><br><small>Für Tage mit wenig Energie – zählt trotzdem für die Serie.</small></span>
-    </label>`;
-
-  const cards = [];
+    </label>`);
   if (plan.alltag.length) {
     cards.push(section({
       icon: '☀️', title: 'Grundroutine', meta: 'ca. 10 Minuten · das tägliche Fundament',
@@ -266,10 +342,11 @@ function viewToday() {
 function viewRooms() {
   const key = today();
   const focus = planFor(state, key).focusRoom;
+  const tasks = effectiveTasks(state);
   const roomCards = ROOMS.map((r) => {
-    const st = roomStatus(state.tasks, r.id, key);
+    const st = roomStatus(tasks, r.id, key);
     const open = openRoom === r.id;
-    const tasks = state.tasks.filter((t) => t.room === r.id).sort((a, b) => dueRatio(b, key) - dueRatio(a, key));
+    const list = tasks.filter((t) => t.room === r.id).sort((a, b) => dueRatio(b, key) - dueRatio(a, key));
     return `
       <section class="card room ${open ? 'open' : ''}">
         <button class="room-head" data-room="${r.id}">
@@ -278,22 +355,57 @@ function viewRooms() {
           <span class="room-meta">${st.overdue ? `${st.overdue} fällig` : 'alles gut'}</span>
           <span class="chev">${open ? '▴' : '▾'}</span>
         </button>
-        ${open ? `<div class="room-tasks">${tasks.map((t) => taskRow(t.id, { showDue: true })).join('')}</div>` : ''}
+        ${open ? `<div class="room-tasks">${list.map((t) => taskRow(t.id, { due: t, send: state.members.length > 1 })).join('')}</div>` : ''}
       </section>`;
   });
-  const counts = ROOMS.map((r) => roomStatus(state.tasks, r.id, key).level);
-  const green = counts.filter((c) => c === 'green').length;
+  const green = ROOMS.filter((r) => roomStatus(tasks, r.id, key).level === 'green').length;
   return `
     <section class="hero slim">
       <div class="hero-text">
         <p class="hello">Wie steht's ums Haus?</p>
-        <p class="wanda-says"><img src="icons/wanda.svg" alt="" class="wanda-mini">${green} von ${ROOMS.length} Bereichen sind grün. Tipp auf einen Raum, um auch außer der Reihe etwas abzuhaken.</p>
+        <p class="wanda-says"><img src="icons/wanda.svg" alt="" class="wanda-mini">${green} von ${ROOMS.length} Bereichen sind grün. Tipp auf einen Raum, um auch außer der Reihe etwas abzuhaken${state.members.length > 1 ? ' oder mit 📨 jemandem zuzuschicken' : ''}.</p>
       </div>
     </section>
     ${roomCards.join('')}`;
 }
 
 // ---------- Ansicht: Familie ----------
+
+const STATUS_TEXT = {
+  ok: 'verbunden · alles aktuell',
+  pending: 'verbunden · Änderungen werden gesendet …',
+  offline: 'gerade offline · Änderungen werden später gesendet',
+  local: '',
+};
+
+function syncCard() {
+  if (!sync.syncConfigured()) return '';
+  if (!state.sync) {
+    return section({
+      icon: '☁️', title: 'Familie verbinden',
+      meta: 'Damit alle auf ihren Handys dieselben Aufgaben und Punkte sehen und ihr euch Aufgaben zuschicken könnt.',
+      body: `
+        <div class="row wrap">
+          <button class="btn" data-action="open-create">Familie gründen</button>
+          <button class="btn ghost" data-action="open-join">Mit Code beitreten</button>
+        </div>
+        <p class="hint">Gründen macht nur eine Person – alle anderen treten mit dem Einladungscode bei.</p>`,
+    });
+  }
+  return section({
+    icon: '☁️', title: esc(state.sync.name || 'Familie'),
+    meta: `<span class="sync-dot ${sync.getStatus()}"></span> ${STATUS_TEXT[sync.getStatus()] || ''}`,
+    body: `
+      <div class="invite">
+        <span>Einladungscode</span>
+        <b>${formatCode(state.sync.inviteCode)}</b>
+      </div>
+      <div class="row wrap">
+        <button class="btn" data-action="share-invite">📤 Einladung teilen</button>
+        <button class="btn ghost small" data-action="leave">Dieses Handy abmelden</button>
+      </div>`,
+  });
+}
 
 function viewFamily() {
   const key = today();
@@ -322,11 +434,25 @@ function viewFamily() {
   const recent = [...state.history].reverse().slice(0, 12).map((h) => {
     const t = task(h.taskId);
     const m = member(h.member);
-    const when = h.date === key ? 'heute' : h.date === addDays(key, -1) ? 'gestern' : h.date.split('-').reverse().slice(0, 2).join('.') + '.';
-    return `<li><span>${m?.emoji ?? '❔'}</span><span>${esc(t?.name ?? 'Aufgabe')} <small>${t ? esc(roomName(state, t.room)) : ''} · ${when}</small></span><b>+${h.points}</b></li>`;
+    const when = h.date === key ? 'heute' : h.date === addDays(key, -1) ? 'gestern' : shortDate(h.date);
+    return `<li><span>${m?.emoji ?? '❔'}</span><span>${esc(t?.name ?? h.title ?? 'Aufgabe')} <small>${t ? esc(roomName(state, t.room)) + ' · ' : ''}${when}</small></span><b>+${h.points}</b></li>`;
   });
 
+  // Offene Zuschickungen plus die der letzten drei Tage
+  const recentCut = addDays(key, -3);
+  const sent = state.assignments
+    .filter((a) => !a.doneAt || a.doneAt >= recentCut)
+    .sort((a, b) => !!a.doneAt - !!b.doneAt || (a.due || '9999').localeCompare(b.due || '9999'));
+
   return `
+    ${syncCard()}
+    ${section({
+      icon: '📨', title: 'Zugeschickte Aufgaben', meta: 'wer gerade was übernimmt',
+      extra: state.members.length > 1 ? '<button class="btn small" data-action="open-send">+ Neu</button>' : '',
+      body: state.members.length < 2
+        ? '<p class="hint">Füge in den Einstellungen weitere Personen hinzu, um Aufgaben zuzuschicken.</p>'
+        : sent.length ? sent.map((a) => assignRow(a, { showTo: true, removable: true })).join('') : '<p class="hint">Gerade ist nichts zugeschickt. Tipp auf „+ Neu“ oder im Räume-Tab auf 📨.</p>',
+    })}
     ${section({
       icon: '🎁', title: 'Familienziel', meta: esc(g.title),
       body: `
@@ -336,14 +462,13 @@ function viewFamily() {
     ${section({
       icon: '👨‍👩‍👧', title: 'Wer bist du gerade?', meta: 'Punkte werden der ausgewählten Person gutgeschrieben',
       body: `<div class="who">${state.members.map((m) => `
-        <button class="who-btn ${m.id === state.currentMember ? 'active' : ''}" data-member="${m.id}">${m.emoji}<span>${esc(m.name)}</span></button>`).join('')}</div>`,
+        <button class="who-btn ${m.id === state.currentMember ? 'active' : ''}" data-member="${esc(m.id)}">${m.emoji}<span>${esc(m.name)}</span></button>`).join('')}</div>`,
     })}
     ${section({ icon: '🏅', title: 'Punkte diese Woche', body: `<div class="members">${members.join('')}</div>` })}
     ${section({
       icon: '📜', title: 'Zuletzt erledigt',
       body: recent.length ? `<ul class="recent">${recent.join('')}</ul>` : '<p class="hint">Noch nichts erledigt – die erste Aufgabe wartet auf der Heute-Seite.</p>',
-    })}
-    <p class="hint center">Aufgaben zuweisen und auf allen Handys sehen kommt mit Stufe 2 (Familien-Sync).</p>`;
+    })}`;
 }
 
 // ---------- Ansicht: Einstellungen ----------
@@ -351,14 +476,14 @@ function viewFamily() {
 function viewSettings() {
   const membersEdit = state.members.map((m) => `
     <div class="row">
-      <select data-member-emoji="${m.id}" aria-label="Symbol">${MEMBER_EMOJIS.map((e) => `<option ${e === m.emoji ? 'selected' : ''}>${e}</option>`).join('')}</select>
-      <input type="text" value="${esc(m.name)}" data-member-name="${m.id}" aria-label="Name">
-      ${state.members.length > 1 ? `<button class="icon-btn" data-remove-member="${m.id}" aria-label="Entfernen">✕</button>` : ''}
+      <select data-member-emoji="${esc(m.id)}" aria-label="Symbol">${MEMBER_EMOJIS.map((e) => `<option ${e === m.emoji ? 'selected' : ''}>${e}</option>`).join('')}</select>
+      <input type="text" maxlength="40" value="${esc(m.name)}" data-member-name="${esc(m.id)}" aria-label="Name">
+      ${state.members.length > 1 ? `<button class="icon-btn" data-remove-member="${esc(m.id)}" aria-label="Entfernen">✕</button>` : ''}
     </div>`).join('');
 
   const roomsEdit = ROOMS.filter((r) => r.id !== 'alltag').map((r) => `
     <div class="row"><span class="row-emoji">${r.emoji}</span>
-      <input type="text" value="${esc(roomName(state, r.id))}" data-room-name="${r.id}" aria-label="Raumname"></div>`).join('');
+      <input type="text" maxlength="40" value="${esc(roomName(state, r.id))}" data-room-name="${r.id}" aria-label="Raumname"></div>`).join('');
 
   const effortOpts = (sel) => Object.entries(EFFORT_LABELS).map(([v, l]) => `<option value="${v}" ${+v === sel ? 'selected' : ''}>${l}</option>`).join('');
   const roomOpts = (sel) => ROOMS.map((r) => `<option value="${r.id}" ${r.id === sel ? 'selected' : ''}>${r.emoji} ${esc(roomName(state, r.id))}</option>`).join('');
@@ -370,11 +495,11 @@ function viewSettings() {
         <summary>${r.emoji} ${esc(roomName(state, r.id))} <small>(${list.length})</small></summary>
         ${list.map((t) => `
           <div class="task-edit">
-            <input type="text" value="${esc(t.name)}" data-task-name="${t.id}" aria-label="Aufgabe">
+            <input type="text" maxlength="120" value="${esc(t.name)}" data-task-name="${esc(t.id)}" aria-label="Aufgabe">
             <div class="row">
-              <label>alle <input type="number" min="1" max="365" value="${t.interval}" data-task-interval="${t.id}"> Tage</label>
-              <select data-task-effort="${t.id}" aria-label="Unbeliebtheit">${effortOpts(t.effort)}</select>
-              ${t.id === HUNDE_CHECK ? '' : `<button class="icon-btn" data-remove-task="${t.id}" aria-label="Löschen">🗑</button>`}
+              <label>alle <input type="number" min="1" max="365" value="${t.interval}" data-task-interval="${esc(t.id)}"> Tage</label>
+              <select data-task-effort="${esc(t.id)}" aria-label="Unbeliebtheit">${effortOpts(t.effort)}</select>
+              ${t.id === HUNDE_CHECK ? '' : `<button class="icon-btn" data-remove-task="${esc(t.id)}" aria-label="Löschen">🗑</button>`}
             </div>
           </div>`).join('')}
       </details>`;
@@ -385,7 +510,7 @@ function viewSettings() {
     ${section({
       icon: '🎁', title: 'Familienziel',
       body: `
-        <div class="row"><input type="text" value="${esc(state.goal.title)}" data-goal="title" aria-label="Belohnung"></div>
+        <div class="row"><input type="text" maxlength="80" value="${esc(state.goal.title)}" data-goal="title" aria-label="Belohnung"></div>
         <div class="row"><label>bei <input type="number" min="50" step="50" value="${state.goal.points}" data-goal="points"> Punkten</label></div>
         <button class="btn ghost" data-action="new-goal">Ziel neu starten (Punkte ab heute zählen)</button>`,
     })}
@@ -395,7 +520,7 @@ function viewSettings() {
       body: `${tasksEdit}
         <div class="task-new">
           <h3>Neue Aufgabe</h3>
-          <input type="text" placeholder="z. B. Heizkörper abwischen" id="new-task-name">
+          <input type="text" maxlength="120" placeholder="z. B. Heizkörper abwischen" id="new-task-name">
           <div class="row">
             <select id="new-task-room">${roomOpts('flur')}</select>
           </div>
@@ -408,15 +533,15 @@ function viewSettings() {
     })}
     ${section({
       icon: '💾', title: 'Sicherung',
-      meta: 'Die Daten liegen bisher nur auf diesem Gerät.',
+      meta: state.sync ? 'Eure Daten liegen sicher in der Familien-Cloud. Zusätzlich kannst du eine Kopie herunterladen.' : 'Die Daten liegen bisher nur auf diesem Gerät.',
       body: `
         <div class="row wrap">
           <button class="btn ghost" data-action="export">Sicherung herunterladen</button>
-          <label class="btn ghost">Sicherung laden<input type="file" accept="application/json" id="import" hidden></label>
+          ${state.sync ? '' : '<label class="btn ghost">Sicherung laden<input type="file" accept="application/json" id="import" hidden></label>'}
         </div>
-        <button class="btn danger" data-action="reset">Alles zurücksetzen</button>`,
+        ${state.sync ? '' : '<button class="btn danger" data-action="reset">Alles zurücksetzen</button>'}`,
     })}
-    <p class="hint center">Wisch-Wanda · Stufe 1 (Prototyp)</p>`;
+    <p class="hint center">Wisch-Wanda · Stufe 2 (Familien-Sync)</p>`;
 }
 
 // ---------- Timer für die Raum-Runde ----------
@@ -430,7 +555,7 @@ function startTimer(index = 0) {
   const minutes = isQuick() ? ROUND_MINUTES.quick : ROUND_MINUTES.normal;
   timer = { index, endAt: Date.now() + minutes * 60000, remaining: minutes * 60000, paused: false, finished: false };
   requestWakeLock();
-  renderTimer();
+  renderOverlay();
 }
 
 let wakeLock = null;
@@ -446,8 +571,7 @@ function stopTimer() {
   timer = null;
   wakeLock?.release?.();
   wakeLock = null;
-  $overlay.hidden = true;
-  $overlay.innerHTML = '';
+  renderOverlay();
   render();
 }
 
@@ -456,22 +580,22 @@ function timeLeft() {
   return timer.paused ? timer.remaining : Math.max(0, timer.endAt - Date.now());
 }
 
+const clockText = (left) => `${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, '0')}`;
+
 function renderTimer() {
-  if (!timer) return;
   const rounds = roundPlan();
   const r = rounds[timer.index];
-  if (!r) return stopTimer();
-  const left = timeLeft();
-  const mm = String(Math.floor(left / 60000)).padStart(1, '0');
-  const ss = String(Math.floor((left % 60000) / 1000)).padStart(2, '0');
+  if (!r) {
+    timer = null;
+    return renderOverlay();
+  }
   const last = timer.index === rounds.length - 1;
-  $overlay.hidden = false;
   $overlay.innerHTML = `
     <div class="timer ${timer.finished ? 'finished' : ''}">
       <button class="icon-btn close" data-action="stop-round" aria-label="Runde beenden">✕</button>
       <p class="timer-step">Raum ${timer.index + 1} von ${rounds.length}</p>
       <h2>${roomEmoji(r.room)} ${esc(roomName(state, r.room))}</h2>
-      <p class="clock" id="clock">${mm}:${ss}</p>
+      <p class="clock" id="clock">${clockText(timeLeft())}</p>
       <p class="timer-hint">${timer.finished ? (last ? 'Geschafft! Letzter Raum erledigt. 🎉' : 'Zeit um – ab in den nächsten Raum!') : 'Nicht perfekt, nur sichtbar besser.'}</p>
       <div class="timer-tasks">${r.tasks.length ? r.tasks.map((id) => taskRow(id)).join('') : '<p class="hint">Oberflächen frei, Dinge wegräumen, lüften.</p>'}</div>
       <div class="timer-actions">
@@ -488,57 +612,277 @@ setInterval(() => {
   if (left <= 0) {
     timer.finished = true;
     beep();
-    renderTimer();
+    renderOverlay();
     return;
   }
   const clock = document.getElementById('clock');
-  if (clock) clock.textContent = `${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, '0')}`;
+  if (clock) clock.textContent = clockText(left);
 }, 250);
 
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
-    if (timer && !wakeLock) requestWakeLock();
-    render();
-  }
-});
-
-// ---------- Onboarding ----------
+// ---------- Overlays ----------
 
 function renderOnboarding() {
-  $overlay.hidden = false;
   $overlay.innerHTML = `
     <form class="onboarding" id="onboarding">
       <img src="icons/wanda.svg" alt="" class="wanda-big">
       <h1>Hallo, ich bin Wanda!</h1>
       <p>Ich helfe euch, den Haushalt in kleinen Häppchen zu schaffen: eine Stunde am Tag, ein paar Minuten pro Raum, und jede Woche ein Raum gründlich.</p>
+      ${sync.syncConfigured() ? '<button type="button" class="btn ghost" data-action="open-join">📨 Ich wurde eingeladen – mit Code beitreten</button>' : ''}
       <h3>Wer wohnt bei euch?</h3>
       <p class="hint">Die erste Person bist du. Leere Felder werden ignoriert.</p>
       ${[0, 1, 2, 3, 4].map((i) => `
         <div class="row">
           <select name="emoji${i}">${MEMBER_EMOJIS.map((e, j) => `<option ${j === i ? 'selected' : ''}>${e}</option>`).join('')}</select>
-          <input type="text" name="name${i}" placeholder="${i === 0 ? 'Dein Name' : 'Name'}" value="${i === 0 ? 'Mama' : ''}">
+          <input type="text" maxlength="40" name="name${i}" placeholder="${i === 0 ? 'Dein Name' : 'Name'}" value="${i === 0 ? 'Mama' : ''}">
         </div>`).join('')}
       <button class="btn big" type="submit">Los geht's! 🧽</button>
     </form>`;
 }
 
+function renderSendSheet() {
+  const others = state.members.filter((m) => m.id !== me().id);
+  const to = sheet.to || others[0]?.id;
+  const groups = ROOMS.map((r) => `
+    <optgroup label="${r.emoji} ${esc(roomName(state, r.id))}">
+      ${state.tasks.filter((t) => t.room === r.id).map((t) => `<option value="${esc(t.id)}" ${t.id === sheet.taskId ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
+    </optgroup>`).join('');
+  $overlay.innerHTML = `
+    <form class="sheet" id="send-form">
+      <button type="button" class="icon-btn close" data-action="close-sheet" aria-label="Schließen">✕</button>
+      <h2>📨 Aufgabe zuschicken</h2>
+      <h3>An wen?</h3>
+      <div class="who">${others.map((m) => `
+        <label class="who-btn"><input type="radio" name="to" value="${esc(m.id)}" ${m.id === to ? 'checked' : ''}>${m.emoji}<span>${esc(m.name)}</span></label>`).join('')}
+      </div>
+      <h3>Was?</h3>
+      <select name="task">
+        <option value="" ${sheet.taskId ? '' : 'selected'}>✏️ Eigene Aufgabe …</option>
+        ${groups}
+      </select>
+      <div class="custom">
+        <input type="text" name="title" maxlength="120" placeholder="z. B. Einkaufen gehen, Zimmer aufräumen">
+        <label class="row">Wie unbeliebt? <select name="effort">${Object.entries(EFFORT_LABELS).map(([v, l]) => `<option value="${v}" ${v === '2' ? 'selected' : ''}>${l} (+${POINTS[v]})</option>`).join('')}</select></label>
+      </div>
+      <h3>Bis wann? <small>(optional)</small></h3>
+      <div class="row wrap due-chips">
+        <label><input type="radio" name="due" value="" checked><span>Ohne</span></label>
+        <label><input type="radio" name="due" value="${today()}"><span>Heute</span></label>
+        <label><input type="radio" name="due" value="${addDays(today(), 1)}"><span>Morgen</span></label>
+        <label><input type="radio" name="due" value="${addDays(mondayOf(today()), 6)}"><span>Sonntag</span></label>
+      </div>
+      <h3>Nachricht <small>(optional)</small></h3>
+      <input type="text" name="note" maxlength="300" placeholder="z. B. Oma kommt am Samstag 😉">
+      <button class="btn big" type="submit">Zuschicken</button>
+    </form>`;
+}
+
+function renderJoinSheet() {
+  const hasData = state.onboarded && (state.history.length > 0 || state.assignments.length > 0);
+  $overlay.innerHTML = `
+    <form class="sheet" id="join-form">
+      <button type="button" class="icon-btn close" data-action="close-sheet" aria-label="Schließen">✕</button>
+      <img src="icons/wanda.svg" alt="" class="wanda-big">
+      <h2>${sheet.code ? 'Du wurdest eingeladen! 🎉' : 'Familie beitreten'}</h2>
+      <p>Gib den Einladungscode ein, den du bekommen hast.</p>
+      <input type="text" name="code" value="${esc(formatCode(sheet.code || ''))}" placeholder="ABCD-EFGH" autocomplete="off" autocapitalize="characters" maxlength="12" class="code-input" required>
+      ${hasData ? '<p class="hint warn">⚠️ Die bisherigen Daten auf diesem Handy werden durch die Familiendaten ersetzt.</p>' : ''}
+      <button class="btn big" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'Einen Moment …' : 'Beitreten'}</button>
+    </form>`;
+}
+
+function renderCreateSheet() {
+  $overlay.innerHTML = `
+    <form class="sheet" id="create-form">
+      <button type="button" class="icon-btn close" data-action="close-sheet" aria-label="Schließen">✕</button>
+      <h2>☁️ Familie gründen</h2>
+      <p>Deine bisherigen Aufgaben, Personen und Punkte werden in die Familien-Cloud übertragen. Danach bekommst du einen Einladungscode für die anderen.</p>
+      <h3>Wie heißt eure Familie?</h3>
+      <input type="text" name="name" maxlength="80" value="${esc(sheet.name || 'Unsere Familie')}" required>
+      <button class="btn big" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'Wird eingerichtet …' : 'Familie gründen'}</button>
+    </form>`;
+}
+
+function renderInviteSheet() {
+  $overlay.innerHTML = `
+    <div class="sheet center">
+      <img src="icons/wanda.svg" alt="" class="wanda-big">
+      <h2>Eure Familie ist startklar! 🎉</h2>
+      <p>Schick den anderen diesen Code oder teile direkt den Link:</p>
+      <div class="invite big"><b>${formatCode(state.sync.inviteCode)}</b></div>
+      <button class="btn big" data-action="share-invite">📤 Einladung teilen</button>
+      <button class="btn ghost" data-action="close-sheet">Fertig</button>
+    </div>`;
+}
+
+function renderPicker() {
+  $overlay.innerHTML = `
+    <form class="sheet" id="picker-form">
+      <img src="icons/wanda.svg" alt="" class="wanda-big">
+      <h2>Willkommen bei ${esc(state.sync?.name || 'der Familie')}!</h2>
+      <h3>Wer bist du?</h3>
+      <div class="who">${state.members.map((m) => `
+        <button type="button" class="who-btn" data-pick="${esc(m.id)}">${m.emoji}<span>${esc(m.name)}</span></button>`).join('')}
+      </div>
+      <h3>Nicht dabei?</h3>
+      <div class="row">
+        <select name="emoji">${MEMBER_EMOJIS.map((e, i) => `<option ${i === 2 ? 'selected' : ''}>${e}</option>`).join('')}</select>
+        <input type="text" name="name" maxlength="40" placeholder="Dein Name">
+      </div>
+      <button class="btn" type="submit">Mich hinzufügen</button>
+    </form>`;
+}
+
+function needsPicker() {
+  return state.onboarded && state.sync && !member(state.currentMember) && state.members.length > 0;
+}
+
+function renderOverlay() {
+  let fn = null;
+  if (sheet?.type === 'join') fn = renderJoinSheet;
+  else if (!state.onboarded) fn = renderOnboarding;
+  else if (needsPicker()) fn = renderPicker;
+  else if (timer) fn = renderTimer;
+  else if (sheet) fn = { send: renderSendSheet, create: renderCreateSheet, invite: renderInviteSheet }[sheet.type];
+  $overlay.hidden = !fn;
+  if (fn) fn();
+  else $overlay.innerHTML = '';
+}
+
+function openSheet(s) {
+  sheet = s;
+  renderOverlay();
+  $overlay.scrollTop = 0;
+}
+
+function closeSheet() {
+  sheet = null;
+  busy = false;
+  renderOverlay();
+}
+
 // ---------- Rendern ----------
 
 function render() {
-  if (!state.onboarded) return renderOnboarding();
-  const views = { heute: viewToday, raeume: viewRooms, familie: viewFamily, einstellungen: viewSettings };
-  $app.innerHTML = views[tab]();
+  if (state.onboarded) {
+    const views = { heute: viewToday, raeume: viewRooms, familie: viewFamily, einstellungen: viewSettings };
+    $app.innerHTML = views[tab]();
+  }
   document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   document.getElementById('me-btn').textContent = me().emoji;
+  updateSyncDot();
+}
+
+function updateSyncDot() {
+  const dot = document.getElementById('sync-dot');
+  const s = state.sync ? sync.getStatus() : 'local';
+  dot.className = `sync-dot ${s}`;
+  dot.hidden = s === 'local';
+  dot.title = STATUS_TEXT[s] || '';
+}
+
+// Während jemand tippt, nicht neu zeichnen (sonst springt der Cursor weg).
+let renderPending = false;
+function isEditing() {
+  const el = document.activeElement;
+  return el && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) && el.type !== 'checkbox' && el.type !== 'radio';
+}
+function softRender() {
+  if (isEditing()) {
+    renderPending = true;
+    return;
+  }
+  render();
+  if (timer) renderTimer();
+}
+document.addEventListener('focusout', () => setTimeout(() => {
+  if (renderPending && !isEditing()) {
+    renderPending = false;
+    softRender();
+  }
+}, 50));
+
+// ---------- Sync anbinden ----------
+
+let remoteTimer = null;
+function onSyncChange(ev) {
+  if (ev.type === 'remote') notifyRemote(ev);
+  if (ev.type === 'disconnected') toast('Die Familie gibt es nicht mehr – Wanda läuft wieder nur auf diesem Handy.', 4000);
+  clearTimeout(remoteTimer);
+  remoteTimer = setTimeout(() => {
+    if (needsPicker() && !sheet) renderOverlay();
+    softRender();
+  }, 120);
+}
+
+function notifyRemote({ kind, eventType, value, previous }) {
+  const myId = me().id;
+  if (kind === 'assignment' && value) {
+    const title = assignmentTitle(state, value);
+    if (eventType === 'INSERT' && value.to === myId && value.from !== myId) {
+      toast(`📨 ${member(value.from)?.name ?? 'Jemand'} hat dir „${title}“ geschickt`, 4000);
+      navigator.vibrate?.([80, 60, 80]);
+    } else if (value.doneAt && !previous?.doneAt && value.from === myId && value.doneBy !== myId) {
+      toast(`✅ ${member(value.doneBy)?.name ?? 'Jemand'} hat „${title}“ erledigt!`, 4000);
+    }
+  } else if (kind === 'completion' && eventType === 'INSERT' && value && value.member !== myId && !previous && value.date === today()) {
+    const name = task(value.taskId)?.name ?? value.title ?? 'eine Aufgabe';
+    toast(`⭐ ${member(value.member)?.name ?? 'Jemand'}: „${name}“ erledigt (+${value.points})`);
+  }
+}
+
+setPusher((ops) => sync.enqueue(ops));
+
+async function share() {
+  const code = state.sync.inviteCode;
+  const url = `${location.origin}${location.pathname}#join=${code}`;
+  const text = `Komm in unsere Wisch-Wanda-Familie! 🧽 Öffne den Link und tippe auf „Beitreten“. Code: ${formatCode(code)}`;
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: 'Wisch-Wanda', text, url });
+      return;
+    }
+  } catch (e) {
+    if (e?.name === 'AbortError') return;
+  }
+  try {
+    await navigator.clipboard.writeText(`${text}\n${url}`);
+    toast('Einladung kopiert – jetzt z. B. in WhatsApp einfügen.');
+  } catch {
+    prompt('Diesen Link verschicken:', url);
+  }
+}
+
+function joinCodeFromUrl() {
+  const m = location.hash.match(/join=([A-Za-z0-9-]+)/);
+  return m ? m[1].replace(/-/g, '').toUpperCase() : null;
+}
+
+function clearJoinHash() {
+  if (location.hash) history.replaceState(null, '', location.pathname + location.search);
 }
 
 // ---------- Ereignisse ----------
 
 document.addEventListener('click', (ev) => {
-  const el = ev.target.closest('[data-task],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
-  if (!el) return;
+  const el = ev.target.closest('[data-task],[data-assign],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
+  if (!el || el.matches('input')) return;
   const d = el.dataset;
   if (d.task) return complete(d.task, ev);
+  if (d.assign) return completeAssignment(d.assign, ev);
+  if (d.send) return openSheet({ type: 'send', taskId: d.send });
+  if (d.unassign) {
+    const a = state.assignments.find((x) => x.id === d.unassign);
+    if (!a || !confirm(`„${assignmentTitle(state, a)}“ für ${member(a.to)?.name ?? 'diese Person'} zurückziehen?`)) return;
+    deleteAssignment(state, a.id);
+    return render();
+  }
+  if (d.pick) {
+    state.currentMember = d.pick;
+    save(state);
+    toast(`Hallo ${member(d.pick).name}! ${member(d.pick).emoji}`);
+    renderOverlay();
+    return render();
+  }
   if (d.tab) {
     tab = d.tab;
     render();
@@ -558,7 +902,7 @@ document.addEventListener('click', (ev) => {
   if (d.removeMember) {
     const m = member(d.removeMember);
     if (!confirm(`${m.name} entfernen? Bisherige Punkte bleiben in der Liste, aber ohne Namen.`)) return;
-    state.members = state.members.filter((x) => x.id !== d.removeMember);
+    removeMember(state, d.removeMember);
     if (state.currentMember === d.removeMember) state.currentMember = state.members[0].id;
     save(state);
     return render();
@@ -566,8 +910,7 @@ document.addEventListener('click', (ev) => {
   if (d.removeTask) {
     const t = task(d.removeTask);
     if (!confirm(`„${t.name}“ löschen?`)) return;
-    state.tasks = state.tasks.filter((x) => x.id !== d.removeTask);
-    save(state);
+    removeTask(state, d.removeTask);
     return render();
   }
   switch (d.action) {
@@ -593,15 +936,31 @@ document.addEventListener('click', (ev) => {
       if (timer.paused) timer.remaining += 60000;
       else timer.endAt += 60000;
       return renderTimer();
+    case 'open-send':
+      return openSheet({ type: 'send' });
+    case 'open-join':
+      return openSheet({ type: 'join' });
+    case 'open-create':
+      return openSheet({ type: 'create' });
+    case 'close-sheet':
+      clearJoinHash();
+      return closeSheet();
+    case 'share-invite':
+      return share();
+    case 'leave':
+      if (!confirm('Dieses Handy von der Familie abmelden? Die Familie und ihre Daten bleiben erhalten – du kannst jederzeit mit dem Code wieder beitreten.')) return;
+      return sync.leaveFamily().then(() => {
+        toast('Abgemeldet. Wanda läuft jetzt nur auf diesem Handy.');
+        render();
+      });
     case 'add-member': {
       const n = state.members.length + 1;
-      state.members.push({ id: `m${Date.now()}`, name: `Person ${n}`, emoji: MEMBER_EMOJIS[n % MEMBER_EMOJIS.length] });
-      save(state);
+      saveMember(state, { id: newId(), name: `Person ${n}`, emoji: MEMBER_EMOJIS[n % MEMBER_EMOJIS.length] });
       return render();
     }
     case 'new-goal':
-      state.goal = { ...state.goal, since: today(), reachedAt: undefined };
-      save(state);
+      state.goal = { ...state.goal, since: today(), reachedAt: null };
+      saveSettings(state);
       toast('Neues Ziel gestartet – auf geht\'s!');
       return render();
     case 'add-task': {
@@ -610,18 +969,17 @@ document.addEventListener('click', (ev) => {
       const room = document.getElementById('new-task-room').value;
       let id = `${room}-${slug(name)}`;
       while (task(id)) id += '-x';
-      state.tasks.push({
+      saveTask(state, {
         id, room, name,
-        interval: Math.max(1, +document.getElementById('new-task-interval').value || 30),
+        interval: Math.max(1, Math.min(365, +document.getElementById('new-task-interval').value || 30)),
         effort: +document.getElementById('new-task-effort').value || 2,
         lastDone: null,
       });
-      save(state);
       toast('Aufgabe hinzugefügt – Wanda plant sie ab morgen ein.');
       return render();
     }
     case 'export': {
-      const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify({ ...state, outbox: [] }, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `wisch-wanda-sicherung-${today()}.json`;
@@ -634,6 +992,7 @@ document.addEventListener('click', (ev) => {
       state = freshState();
       save(state);
       tab = 'heute';
+      renderOverlay();
       return render();
   }
 });
@@ -647,21 +1006,34 @@ document.addEventListener('change', (ev) => {
     save(state);
     return render();
   }
-  if (d.memberName) member(d.memberName).name = el.value.trim() || 'Ohne Name';
-  else if (d.memberEmoji) member(d.memberEmoji).emoji = el.value;
-  else if (d.roomName) {
+  if (d.memberName) {
+    const m = member(d.memberName);
+    m.name = el.value.trim() || 'Ohne Name';
+    saveMember(state, m);
+  } else if (d.memberEmoji) {
+    const m = member(d.memberEmoji);
+    m.emoji = el.value;
+    saveMember(state, m);
+    document.getElementById('me-btn').textContent = me().emoji;
+  } else if (d.roomName) {
     const def = ROOMS.find((r) => r.id === d.roomName).name;
     const v = el.value.trim();
     if (v && v !== def) state.roomNames[d.roomName] = v;
     else delete state.roomNames[d.roomName];
-  } else if (d.taskName) task(d.taskName).name = el.value.trim() || task(d.taskName).name;
-  else if (d.taskInterval) task(d.taskInterval).interval = Math.max(1, Math.min(365, +el.value || 1));
-  else if (d.taskEffort) task(d.taskEffort).effort = +el.value;
-  else if (d.goal === 'title') state.goal.title = el.value.trim() || 'Familienbelohnung';
-  else if (d.goal === 'points') state.goal.points = Math.max(50, +el.value || 1000);
-  else if (el.id === 'import') return importBackup(el.files[0]);
-  else return;
-  save(state);
+    saveSettings(state);
+  } else if (d.taskName || d.taskInterval || d.taskEffort) {
+    const t = task(d.taskName || d.taskInterval || d.taskEffort);
+    if (d.taskName) t.name = el.value.trim() || t.name;
+    if (d.taskInterval) t.interval = Math.max(1, Math.min(365, +el.value || 1));
+    if (d.taskEffort) t.effort = +el.value;
+    saveTask(state, t);
+  } else if (d.goal) {
+    if (d.goal === 'title') state.goal.title = el.value.trim() || 'Familienbelohnung';
+    else state.goal.points = Math.max(50, +el.value || 1000);
+    saveSettings(state);
+  } else if (el.id === 'import') {
+    importBackup(el.files[0]);
+  }
 });
 
 async function importBackup(file) {
@@ -669,7 +1041,7 @@ async function importBackup(file) {
   try {
     const data = JSON.parse(await file.text());
     if (!Array.isArray(data.tasks) || !Array.isArray(data.members)) throw new Error('Format');
-    state = { ...freshState(), ...data };
+    state = migrate({ ...freshState(), ...data, sync: null, outbox: [] });
     save(state);
     toast('Sicherung geladen ✓');
     render();
@@ -678,29 +1050,111 @@ async function importBackup(file) {
   }
 }
 
-document.addEventListener('submit', (ev) => {
-  if (ev.target.id !== 'onboarding') return;
+document.addEventListener('submit', async (ev) => {
+  const form = ev.target;
   ev.preventDefault();
-  const f = new FormData(ev.target);
-  const members = [0, 1, 2, 3, 4]
-    .map((i) => ({ id: `m${i + 1}`, name: String(f.get(`name${i}`) || '').trim(), emoji: f.get(`emoji${i}`) }))
-    .filter((m) => m.name);
-  if (!members.length) members.push({ id: 'm1', name: 'Ich', emoji: '👩' });
-  state.members = members;
-  state.currentMember = members[0].id;
-  state.onboarded = true;
-  save(state);
-  $overlay.hidden = true;
-  $overlay.innerHTML = '';
-  render();
+  const f = new FormData(form);
+
+  if (form.id === 'onboarding') {
+    const members = [0, 1, 2, 3, 4]
+      .map((i) => ({ id: `m${i + 1}`, name: String(f.get(`name${i}`) || '').trim(), emoji: f.get(`emoji${i}`) }))
+      .filter((m) => m.name);
+    if (!members.length) members.push({ id: 'm1', name: 'Ich', emoji: '👩' });
+    state.members = members;
+    state.currentMember = members[0].id;
+    state.onboarded = true;
+    save(state);
+    renderOverlay();
+    return render();
+  }
+
+  if (form.id === 'send-form') {
+    const to = f.get('to');
+    const taskId = f.get('task');
+    const title = String(f.get('title') || '').trim();
+    if (!to) return toast('Bitte auswählen, an wen.');
+    if (!taskId && !title) return toast('Bitte eine Aufgabe auswählen oder eintragen.');
+    const a = addAssignment(state, {
+      to, from: me().id,
+      taskId: taskId || null,
+      title: taskId ? null : title,
+      points: taskId ? pointsFor(task(taskId)) : POINTS[f.get('effort')] ?? 10,
+      due: f.get('due') || null,
+      note: String(f.get('note') || '').trim(),
+    });
+    toast(`📨 „${assignmentTitle(state, a)}“ an ${member(to).name} geschickt`);
+    closeSheet();
+    return render();
+  }
+
+  if (form.id === 'picker-form') {
+    const name = String(f.get('name') || '').trim();
+    if (!name) return toast('Bitte deinen Namen eingeben.');
+    const m = { id: newId(), name, emoji: f.get('emoji') };
+    saveMember(state, m);
+    state.currentMember = m.id;
+    save(state);
+    renderOverlay();
+    return render();
+  }
+
+  if (form.id === 'join-form' || form.id === 'create-form') {
+    if (busy) return;
+    busy = true;
+    const isJoin = form.id === 'join-form';
+    if (isJoin) sheet.code = String(f.get('code') || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    else sheet.name = String(f.get('name') || '').trim();
+    renderOverlay();
+    try {
+      if (isJoin) {
+        await sync.joinFamily(sheet.code);
+        state.onboarded = true;
+        state.currentMember = null; // „Wer bist du?“ fragen
+        save(state);
+        clearJoinHash();
+        tab = 'heute';
+        busy = false;
+        sheet = null;
+        toast(`Willkommen bei ${state.sync.name}! 🎉`);
+      } else {
+        await sync.createFamily(sheet.name);
+        busy = false;
+        sheet = { type: 'invite' };
+      }
+    } catch (e) {
+      busy = false;
+      const msg = e?.code === 'P0002'
+        ? 'Diesen Code gibt es nicht – bitte noch mal prüfen.'
+        : e?.network || !navigator.onLine
+          ? 'Keine Verbindung – bitte Internet prüfen und noch mal versuchen.'
+          : `Das hat nicht geklappt: ${e?.message || e}`;
+      toast(msg, 4000);
+    }
+    renderOverlay();
+    return render();
+  }
 });
+
+// ---------- Start ----------
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    if (timer && !wakeLock) requestWakeLock();
+    sync.resume();
+    softRender();
+  }
+});
+window.addEventListener('online', () => sync.resume());
+setInterval(() => {
+  if (state.sync && state.outbox.length) sync.flush();
+}, 30000);
 
 // Mitternacht überstehen: wenn die App über Nacht offen bleibt, neu zeichnen.
 let lastDay = today();
 setInterval(() => {
   if (today() !== lastDay) {
     lastDay = today();
-    if (!timer) render();
+    if (!timer) softRender();
   }
 }, 60000);
 
@@ -708,4 +1162,20 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
 
+const inviteCode = joinCodeFromUrl();
+if (inviteCode && sync.syncConfigured()) {
+  if (state.sync?.inviteCode === inviteCode) clearJoinHash();
+  else sheet = { type: 'join', code: inviteCode };
+}
+
+sync.start({
+  getState: () => state,
+  onChange: onSyncChange,
+  onStatus: () => {
+    updateSyncDot();
+    if (tab === 'familie' && !isEditing()) render();
+  },
+});
+
+renderOverlay();
 render();

@@ -1,8 +1,9 @@
 // Offline-Fähigkeit: App-Dateien zwischenspeichern, Netzwerk bevorzugen.
-const CACHE = 'wisch-wanda-v1';
+const CACHE = 'wisch-wanda-v2';
 const FILES = [
-  './', 'index.html', 'css/styles.css', 'js/app.js', 'js/planner.js', 'js/store.js',
-  'manifest.webmanifest', 'icons/wanda.svg', 'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
+  './', 'index.html', 'css/styles.css', 'js/app.js', 'js/planner.js', 'js/store.js', 'js/sync.js', 'js/config.js',
+  'js/vendor/supabase.js', 'manifest.webmanifest', 'icons/wanda.svg', 'icons/icon.svg', 'icons/icon-180.png',
+  'icons/icon-192.png', 'icons/icon-512.png',
 ];
 
 self.addEventListener('install', (e) => {
@@ -18,7 +19,8 @@ self.addEventListener('activate', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
-  if (e.request.method !== 'GET') return;
+  // Nur die eigenen App-Dateien – Anfragen an den Familien-Server nie zwischenspeichern.
+  if (e.request.method !== 'GET' || new URL(e.request.url).origin !== self.location.origin) return;
   e.respondWith(
     fetch(e.request)
       .then((res) => {
@@ -26,6 +28,6 @@ self.addEventListener('fetch', (e) => {
         caches.open(CACHE).then((c) => c.put(e.request, copy));
         return res;
       })
-      .catch(() => caches.match(e.request).then((hit) => hit || caches.match('index.html'))),
+      .catch(() => caches.match(e.request, { ignoreSearch: true }).then((hit) => hit || caches.match('index.html'))),
   );
 });
