@@ -12,8 +12,9 @@ export const syncConfigured = () => Boolean(SUPABASE_URL && SUPABASE_KEY);
 const SPECS = {
   member: {
     table: 'members', list: 'members',
-    toRow: (m) => ({ id: m.id, name: m.name, emoji: m.emoji }),
-    fromRow: (r) => ({ id: r.id, name: r.name, emoji: r.emoji }),
+    // Die Rolle (Eltern/Kind) gibt es erst mit 004_eltern.sql – nur mitschicken, wenn bekannt.
+    toRow: (m) => ({ id: m.id, name: m.name, emoji: m.emoji, ...(m.role ? { role: m.role } : {}) }),
+    fromRow: (r) => ({ id: r.id, name: r.name, emoji: r.emoji, ...(r.role ? { role: r.role } : {}) }),
   },
   task: {
     table: 'tasks', list: 'tasks',
@@ -375,6 +376,7 @@ export async function start(context) {
       return setStatus('local');
     }
     if (error) throw fail(error);
+    await claimCurrent();
     await flush();
     await reload();
     await subscribe();
@@ -383,9 +385,78 @@ export async function start(context) {
   }
 }
 
+// ---------- Eltern-Rechte (ab 004_eltern.sql) ----------
+
+// Gibt es die Funktion auf dem Server noch nicht, läuft alles wie vorher.
+const missingFunction = (error) => error?.code === 'PGRST202' || /Could not find the function/i.test(error?.message || '');
+
+async function loadRights() {
+  const c = await getClient();
+  const { data, error } = await c.rpc('wanda_rights', { p_household: hid() });
+  const s = st();
+  if (error && missingFunction(error)) {
+    s.rightsEnabled = false;
+  } else if (!error && data) {
+    s.rightsEnabled = true;
+    s.isFounder = !!data.is_founder;
+  }
+  save(s);
+}
+
+// Dieses Handy als die gewählte Person festlegen. Wirft { code: 'WW002' }, wenn ein Code nötig ist.
+export async function claimMember(memberId, code = null) {
+  await ensureSession();
+  const c = await getClient();
+  const { error } = await c.rpc('claim_member', { p_household: hid(), p_member: memberId, p_code: code });
+  if (error && !missingFunction(error)) throw fail(error);
+  await loadRights();
+}
+
+// Beim Start: Ist dieses Handy noch keiner Person zugeordnet (z. B. direkt nach dem
+// Datenbank-Nachtrag), wird die bisher gewählte Person übernommen – falls frei.
+async function claimCurrent() {
+  const s = st();
+  if (!s.currentMember) return loadRights();
+  try {
+    await claimMember(s.currentMember);
+  } catch (e) {
+    if (e.code === 'WW002' || e.code === 'P0002') {
+      s.currentMember = null; // „Wer bist du?“ – mit Code der Eltern
+      save(s);
+      ctx.onChange({ type: 'need-pick' });
+    } else throw e;
+  }
+}
+
+export async function createMemberCode(memberId) {
+  await ensureSession();
+  const c = await getClient();
+  const { data, error } = await c.rpc('create_member_code', { p_household: hid(), p_member: memberId });
+  if (error) throw fail(error);
+  return data;
+}
+
+export async function setParents(memberIds) {
+  await ensureSession();
+  const c = await getClient();
+  const { error } = await c.rpc('set_parents', { p_household: hid(), p_members: memberIds });
+  if (error) throw fail(error);
+  await reload();
+}
+
+// Welche Personen sind auf wie vielen Handys angemeldet?
+export async function loadDevices() {
+  const c = await getClient();
+  const { data, error } = await c.from('household_users').select('member_id').eq('household_id', hid());
+  if (error) return null;
+  const count = {};
+  for (const r of data) if (r.member_id) count[r.member_id] = (count[r.member_id] || 0) + 1;
+  return count;
+}
+
 export function resume() {
   if (!hid()) return;
-  flush().then(() => reload()).catch(handleStartError);
+  claimCurrent().then(() => flush()).then(() => reload()).catch(handleStartError);
   if (!live) subscribe().catch(handleStartError);
 }
 
@@ -410,6 +481,7 @@ export async function createFamily(name) {
   save(s);
   await flush();
   if (st().outbox.length) throw new Error('Hochladen unvollständig – bitte Internetverbindung prüfen.');
+  await claimCurrent();
   await subscribe();
   return s.sync;
 }
@@ -436,6 +508,7 @@ export async function joinFamily(code) {
   s.outbox = [];
   save(s);
   await reload();
+  await loadRights();
   await subscribe();
   return s.sync;
 }

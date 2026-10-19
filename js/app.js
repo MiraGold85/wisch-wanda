@@ -37,6 +37,11 @@ const member = (id) => state.members.find((m) => m.id === id);
 const me = () => member(state.currentMember) || state.members[0] || { id: null, name: 'du', emoji: '🙂' };
 const task = (id) => state.tasks.find((t) => t.id === id);
 const isQuick = () => !!state.quickDays[today()];
+// Eltern-Rechte: ohne Familie oder ohne festgelegte Eltern dürfen alle alles (wie bisher).
+const rightsOn = () => !!(state.sync && state.rightsEnabled);
+const hasParents = () => state.members.some((m) => m.role === 'parent');
+const isParent = () => member(state.currentMember)?.role === 'parent';
+const canManage = () => !rightsOn() || !hasParents() || isParent();
 const pick = (list) => list[Math.floor(Math.random() * list.length)];
 const formatCode = (c) => (c ? `${c.slice(0, 4)}-${c.slice(4)}` : '');
 const who = (id) => {
@@ -186,12 +191,18 @@ function completeAssignment(id, ev) {
   render();
 }
 
+const goalReached = (g) => !!g.reachedAt || familyPoints(state, g.since) >= g.points;
+
 function checkGoal() {
   const g = state.goal;
-  if (!g || g.reachedAt) return;
-  if (familyPoints(state, g.since) >= g.points) {
+  if (!g || state.goalCelebrated === g.since || familyPoints(state, g.since) < g.points) return;
+  state.goalCelebrated = g.since; // Feier nur einmal pro Handy
+  save(state);
+  if (canManage() && !g.reachedAt) {
     g.reachedAt = today();
     saveSettings(state);
+  }
+  {
     setTimeout(() => {
       burst(window.innerWidth / 2, window.innerHeight / 2, true);
       toast(`🎉 Familienziel erreicht: ${g.title}!`, 4000);
@@ -272,7 +283,7 @@ function assignRow(a, opts = {}) {
       </span>
       <span class="pts">+${assignmentPoints(state, a)}</span>
     </${tag}>`;
-  if (!opts.removable) return check;
+  if (!opts.removable || (a.from !== me().id && !canManage())) return check;
   return `<div class="task-wrap">${check}<button class="send-btn" data-unassign="${esc(a.id)}" aria-label="Zurückziehen" title="Zurückziehen">✕</button></div>`;
 }
 
@@ -446,7 +457,7 @@ function viewToday() {
     }));
   }
   const unassigned = unassignedPrivateRooms(state);
-  if (!ownerPromptRooms && unassigned.length) ownerPromptRooms = unassigned;
+  if (!ownerPromptRooms && unassigned.length && canManage()) ownerPromptRooms = unassigned;
   if (ownerPromptRooms) {
     cards.push(section({
       icon: '🔒', title: 'Wem gehört welches Zimmer?',
@@ -658,9 +669,10 @@ function viewFamily() {
       icon: '🎁', title: 'Familienziel', meta: esc(g.title),
       body: `
         <div class="goal-bar"><span style="width:${goalPct * 100}%"></span></div>
-        <p class="goal-text">${goalPts} von ${g.points} Punkten${g.reachedAt ? ' – 🎉 geschafft! Neues Ziel in den Einstellungen setzen.' : ''}</p>
+        <p class="goal-text">${goalPts} von ${g.points} Punkten${goalReached(g) ? ` – 🎉 geschafft!${canManage() ? ' Neues Ziel in den Einstellungen setzen.' : ''}` : ''}</p>
         ${goalRanking(g, goalPts)}`,
     })}
+    ${rightsCard()}
     ${badgeCard(key)}
     ${state.sync ? '' : section({
       // Nur wenn sich mehrere ein Handy teilen – mit Familien-Verbindung hat jede Person ihr eigenes Handy.
@@ -698,11 +710,49 @@ function goalRanking(g, total) {
     const low = rows[rows.length - 1].pts;
     const losers = rows.filter((r) => r.pts === low).map((r) => `${r.m.emoji} ${esc(r.m.name)}`);
     const names = losers.length > 1 ? `${losers.slice(0, -1).join(', ')} & ${losers[losers.length - 1]}` : losers[0];
-    pays = g.reachedAt
+    pays = goalReached(g)
       ? `<p class="loser done">🎉 Ziel erreicht! ${names} ${losers.length > 1 ? 'spendieren' : 'spendiert'}: <b>${esc(g.title)}</b></p>`
       : `<p class="loser">🍕 Stand jetzt ${losers.length > 1 ? 'spendieren' : 'spendiert'} ${names} – noch ist Zeit, aufzuholen!</p>`;
   }
   return `<ol class="ranking">${list}</ol>${pays}`;
+}
+
+let devices = null; // Person → Anzahl Handys (wird beim Öffnen des Familie-Tabs geladen)
+let parentPick = null; // Auswahl beim Festlegen der Eltern
+
+function rightsCard() {
+  if (!rightsOn()) return '';
+  if (!hasParents()) {
+    if (!state.isFounder) {
+      return section({ icon: '👑', title: 'Eltern-Rechte', body: '<p class="hint">Wer die Familie gegründet hat, legt gerade fest, wer die Eltern sind.</p>' });
+    }
+    parentPick ??= [state.currentMember];
+    return section({
+      icon: '👑', title: 'Wer sind die Eltern?',
+      meta: 'Nur Eltern dürfen dann Personen, Aufgaben, Räume, das Familienziel und den Abfallkalender ändern. Abhaken und Zuschicken können weiterhin alle.',
+      body: `
+        <div class="owner-chips">${state.members.map((m) => `
+          <button class="owner-chip ${parentPick.includes(m.id) ? 'active' : ''}" data-parent-pick="${esc(m.id)}">${m.emoji} ${esc(m.name)}</button>`).join('')}
+        </div>
+        <button class="btn" data-action="save-parents">👑 Als Eltern festlegen</button>`,
+    });
+  }
+  const list = state.members.map((m) => {
+    const n = devices?.[m.id] || 0;
+    return `
+      <li>
+        <span class="avatar small">${m.emoji}</span>
+        <span class="rank-body"><b>${esc(m.name)}</b><small>${m.role === 'parent' ? '👑 Eltern' : '🧒 Kind'} · ${devices ? (n ? `📱 ${n === 1 ? 'auf einem Handy' : `auf ${n} Handys`}` : 'noch kein Handy') : '…'}</small></span>
+        ${isParent() ? `<button class="btn ghost small" data-member-code="${esc(m.id)}">🔑 Code</button>` : ''}
+      </li>`;
+  }).join('');
+  return section({
+    icon: '👑', title: 'Eltern & Handys',
+    meta: isParent()
+      ? 'Neues Handy oder Handy gewechselt? Mit 🔑 Code bekommt es die richtige Person (gilt 24 Stunden).'
+      : 'Neues Handy? Frag deine Eltern nach einem Einrichtungs-Code.',
+    body: `<ul class="devices">${list}</ul>`,
+  });
 }
 
 function badgeCard(key) {
@@ -824,6 +874,21 @@ function viewSettings() {
           </div>`).join('')}
       </details>`;
   }).join('');
+
+  if (!canManage()) {
+    return `
+    ${section({
+      icon: '🔒', title: 'Familien-Einstellungen',
+      meta: 'Personen, Aufgaben, Räume, Familienziel und Abfallkalender können nur Eltern ändern.',
+      body: `<p class="hint">Wenn du etwas ändern möchtest, sag ${namesOf(state.members.filter((m) => m.role === 'parent').map((m) => m.id)) || 'deinen Eltern'} Bescheid. 😉</p>`,
+    })}
+    ${pushSettings()}
+    ${section({
+      icon: '💾', title: 'Sicherung', meta: 'Eine Kopie der Familiendaten herunterladen.',
+      body: '<button class="btn ghost" data-action="export">Sicherung herunterladen</button>',
+    })}
+    <p class="hint center">Wisch-Wanda · ${esc(me().emoji)} ${esc(me().name)}</p>`;
+  }
 
   return `
     ${section({ icon: '👨‍👩‍👧‍👦', title: 'Familie', body: `${membersEdit}<button class="btn ghost" data-action="add-member">+ Person hinzufügen</button>` })}
@@ -1035,6 +1100,41 @@ function renderInviteSheet() {
     </div>`;
 }
 
+let pickCode = null; // Person, für die ein Code eingegeben werden muss
+
+async function pickMember(id, code = null) {
+  busy = true;
+  renderOverlay();
+  try {
+    await sync.claimMember(id, code);
+    state.currentMember = id;
+    pickCode = null;
+    save(state);
+    pushFollowMember();
+    toast(`Hallo ${member(id).name}! ${member(id).emoji}`);
+  } catch (e) {
+    if (e.code === 'WW002') pickCode = id;
+    else if (e.code === 'WW001') toast('Der Code stimmt nicht oder ist abgelaufen.', 4000);
+    else toast(e.network ? 'Keine Verbindung – bitte noch mal versuchen.' : `Das hat nicht geklappt: ${e.message}`, 4000);
+  }
+  busy = false;
+  renderOverlay();
+  render();
+}
+
+function renderCodeSheet() {
+  const m = member(sheet.member);
+  $overlay.innerHTML = `
+    <div class="sheet center">
+      <span class="big-emoji">${m?.emoji ?? '📱'}</span>
+      <h2>Einrichtungs-Code für ${esc(m?.name ?? '')}</h2>
+      <p>Auf dem neuen Handy mit dem Familien-Code beitreten, bei „Wer bist du?“ <b>${esc(m?.name ?? '')}</b> antippen und diesen Code eingeben:</p>
+      <div class="invite big"><b>${esc(sheet.code)}</b></div>
+      <p class="hint">Gilt 24 Stunden und nur ein Mal.</p>
+      <button class="btn big" data-action="close-sheet">Fertig</button>
+    </div>`;
+}
+
 function renderPicker() {
   $overlay.innerHTML = `
     <form class="sheet" id="picker-form">
@@ -1042,6 +1142,12 @@ function renderPicker() {
       <h2>Willkommen bei ${esc(state.sync?.name || 'der Familie')}!</h2>
       <h3>Wer bist du?</h3>
       <p class="hint">Wähle dich selbst – das gilt dann fest für dieses Handy.</p>
+      ${pickCode ? `
+        <div class="code-box">
+          <p><b>${esc(member(pickCode)?.name ?? '')}</b> ist schon auf einem anderen Handy angemeldet${member(pickCode)?.role === 'parent' ? ' oder ist Eltern' : ''}. Gib den Einrichtungs-Code ein, den Mama oder Papa unter Familie → 🔑 Code bekommen:</p>
+          <input type="text" name="member-code" maxlength="8" autocomplete="off" autocapitalize="characters" class="code-input" placeholder="ABC123">
+          <button class="btn" type="button" data-action="claim-with-code" ${busy ? 'disabled' : ''}>${busy ? 'Einen Moment …' : 'Weiter'}</button>
+        </div>` : ''}
       <div class="who">${state.members.map((m) => `
         <button type="button" class="who-btn" data-pick="${esc(m.id)}">${m.emoji}<span>${esc(m.name)}</span></button>`).join('')}
       </div>
@@ -1064,7 +1170,7 @@ function renderOverlay() {
   else if (!state.onboarded) fn = renderOnboarding;
   else if (needsPicker()) fn = renderPicker;
   else if (timer) fn = renderTimer;
-  else if (sheet) fn = { send: renderSendSheet, create: renderCreateSheet, invite: renderInviteSheet }[sheet.type];
+  else if (sheet) fn = { send: renderSendSheet, create: renderCreateSheet, invite: renderInviteSheet, code: renderCodeSheet }[sheet.type];
   $overlay.hidden = !fn;
   if (fn) fn();
   else $overlay.innerHTML = '';
@@ -1129,6 +1235,7 @@ let remoteTimer = null;
 function onSyncChange(ev) {
   if (ev.type === 'remote') notifyRemote(ev);
   if (ev.type === 'reload') cleanupClaims(state, today());
+  if (ev.type === 'need-pick') renderOverlay();
   if (ev.type === 'rejected' && ev.kind === 'waste') {
     toast('🗑️ Der Abfallkalender ist erst auf diesem Handy. Für die ganze Familie bitte den Datenbank-Nachtrag aus SUPABASE.md ausführen.', 7000);
   }
@@ -1196,7 +1303,7 @@ function clearJoinHash() {
 // ---------- Ereignisse ----------
 
 document.addEventListener('click', (ev) => {
-  const el = ev.target.closest('[data-task],[data-assign],[data-waste],[data-owner-room],[data-claim],[data-claim-waste],[data-send-waste],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
+  const el = ev.target.closest('[data-task],[data-assign],[data-waste],[data-owner-room],[data-parent-pick],[data-member-code],[data-claim],[data-claim-waste],[data-send-waste],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
   if (!el || el.matches('input')) return;
   const d = el.dataset;
   if (d.task) return complete(d.task, ev);
@@ -1237,15 +1344,32 @@ document.addEventListener('click', (ev) => {
     return render();
   }
   if (d.pick) {
-    state.currentMember = d.pick;
-    save(state);
-    pushFollowMember();
-    toast(`Hallo ${member(d.pick).name}! ${member(d.pick).emoji}`);
-    renderOverlay();
+    if (busy) return;
+    if (!state.sync) {
+      state.currentMember = d.pick;
+      save(state);
+      renderOverlay();
+      return render();
+    }
+    return pickMember(d.pick);
+  }
+  if (d.parentPick) {
+    parentPick = parentPick.includes(d.parentPick) ? parentPick.filter((x) => x !== d.parentPick) : [...parentPick, d.parentPick];
     return render();
+  }
+  if (d.memberCode) {
+    return sync.createMemberCode(d.memberCode)
+      .then((code) => openSheet({ type: 'code', member: d.memberCode, code }))
+      .catch((e) => toast(`Code konnte nicht erstellt werden: ${e.message}`, 4000));
   }
   if (d.tab) {
     tab = d.tab;
+    if (tab === 'familie' && rightsOn()) {
+      sync.loadDevices().then((dv) => {
+        devices = dv;
+        if (tab === 'familie' && !isEditing()) render();
+      }).catch(() => {});
+    }
     render();
     window.scrollTo(0, 0);
     return;
@@ -1388,6 +1512,20 @@ document.addEventListener('click', (ev) => {
       toast('🔒 Gespeichert – die Raum-Runde enthält jetzt nur gemeinsame Räume.');
       return render();
     }
+    case 'claim-with-code': {
+      const code = String(document.querySelector('[name="member-code"]')?.value || '').trim();
+      if (!code) return toast('Bitte den Code eingeben.');
+      return pickMember(pickCode, code);
+    }
+    case 'save-parents':
+      if (!parentPick?.length) return toast('Bitte mindestens eine Person als Eltern wählen.');
+      return sync.setParents(parentPick)
+        .then(() => {
+          parentPick = null;
+          toast('👑 Eltern festgelegt – Familien-Einstellungen können jetzt nur noch Eltern ändern.', 4000);
+          render();
+        })
+        .catch((e) => toast(`Das hat nicht geklappt: ${e.message}`, 4000));
     case 'remove-waste':
       if (!confirm(`Abfallkalender „${state.waste.name}“ entfernen?`)) return;
       setWaste(state, null);
@@ -1547,11 +1685,8 @@ document.addEventListener('submit', async (ev) => {
     if (!name) return toast('Bitte deinen Namen eingeben.');
     const m = { id: newId(), name, emoji: f.get('emoji') };
     saveMember(state, m);
-    state.currentMember = m.id;
-    save(state);
-    pushFollowMember();
-    renderOverlay();
-    return render();
+    await sync.flush(); // erst anlegen, dann das Handy daran binden
+    return pickMember(m.id);
   }
 
   if (form.id === 'join-form' || form.id === 'create-form') {

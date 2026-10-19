@@ -81,6 +81,26 @@ dann **„Test senden“**. Kommt „🧽 Wanda sagt Hallo!“, ist alles richti
 > 📱 **iPhone:** Benachrichtigungen gehen nur, wenn Wanda über Safari → Teilen → „Zum Home-Bildschirm“
 > hinzugefügt wurde und von dort geöffnet wird (iOS 16.4 oder neuer).
 
+## Eltern-Rechte einrichten (ca. 2 Minuten)
+
+Danach dürfen nur Eltern Personen, Aufgaben, Räume, Familienziel und Abfallkalender ändern, und
+jedes Handy ist fest an eine Person gebunden. Abhaken und Zuschicken können weiterhin alle.
+
+1. Die Datei [`supabase/004_eltern.sql`](supabase/004_eltern.sql) öffnen → **„Copy raw file“**.
+2. Im Supabase **SQL Editor** eine neue Abfrage öffnen, einfügen, **„Run“** (Nachfrage bestätigen).
+3. Auf dem Handy, mit dem die Familie **gegründet** wurde: Wanda öffnen → **Familie** →
+   Karte **„Wer sind die Eltern?“** → Eltern antippen → **„Als Eltern festlegen“**.
+
+Bis Schritt 3 erledigt ist, ändert sich nichts – alle dürfen alles wie bisher.
+
+**Neues Handy für eine Person, die schon angemeldet ist (oder für Eltern):** Eltern tippen unter
+**Familie → Eltern & Handys** bei der Person auf **„🔑 Code“**. Auf dem neuen Handy mit dem
+Familien-Code beitreten, die Person antippen und den Code eingeben (gilt 24 Stunden, nur ein Mal).
+
+> Falls die Karte „Wer sind die Eltern?“ nicht erscheint (z. B. weil das Gründer-Handy inzwischen
+> neu eingerichtet wurde), im SQL Editor einmal ausführen – Namen anpassen:
+> `update members set role = 'parent' where name in ('Eva', 'Christian');`
+
 ## Gut zu wissen
 
 - Kostenlose Supabase-Projekte schlafen ein, wenn eine Woche lang niemand die App benutzt.

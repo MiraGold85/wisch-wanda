@@ -36,6 +36,8 @@ export function freshState(today = dateKey()) {
     waste: null, // Abfallkalender { name, events: [{ d, t }] }
     sync: null, // { householdId, inviteCode, name }
     push: null, // Benachrichtigungen auf diesem Handy { endpoint, remindHour, waste }
+    rightsEnabled: false, // Eltern-Rechte aktiv (Server hat 004_eltern.sql)
+    isFounder: false, // dieses Handy hat die Familie gegründet
     outbox: [],
   };
 }
