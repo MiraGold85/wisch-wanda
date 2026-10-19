@@ -152,6 +152,8 @@ export async function flush() {
         console.warn('Wisch-Wanda: Änderung verworfen', op, error);
         ctx.onChange({ type: 'rejected', kind: op.kind, error });
         needReload = true;
+      } else if (op.kind === 'waste') {
+        st().wasteUnsynced = false;
       } else if (op.kind === 'plan' && op.op === 'insertIgnore') {
         await adoptServerPlan(op.value.date);
       }
@@ -216,7 +218,18 @@ export async function reload() {
     if (hh.data.goal?.title) s.goal = hh.data.goal;
   }
   // Ältere Datenbanken ohne Spalte „waste“: lokalen Kalender behalten.
-  if ('waste' in hh.data) s.waste = hh.data.waste?.events ? hh.data.waste : null;
+  // Konnte der Kalender noch nicht hochgeladen werden, jetzt nachreichen statt ihn zu verwerfen.
+  let uploadWaste = false;
+  if ('waste' in hh.data) {
+    if (hh.data.waste?.events) {
+      s.waste = hh.data.waste;
+      s.wasteUnsynced = false;
+    } else if (s.waste && s.wasteUnsynced) {
+      uploadWaste = !pending.some((op) => op.kind === 'waste');
+    } else {
+      s.waste = null;
+    }
+  }
   s.members = members.map(SPECS.member.fromRow);
   s.tasks = tasks.map(SPECS.task.fromRow);
   s.history = completions.map(SPECS.completion.fromRow);
@@ -225,6 +238,7 @@ export async function reload() {
   for (const op of pending) applyLocal(op);
   save(s);
   ctx.onChange({ type: 'reload' });
+  if (uploadWaste) enqueue([{ kind: 'waste', op: 'update', value: s.waste }]);
 }
 
 // Noch nicht hochgeladene eigene Änderungen nach dem Neuladen wieder anwenden.
@@ -259,7 +273,10 @@ function onRemote(kind, payload) {
     const r = payload.new;
     s.roomNames = r.room_names || {};
     if (r.goal?.title) s.goal = r.goal;
-    if ('waste' in r) s.waste = r.waste?.events ? r.waste : null;
+    if ('waste' in r && !(s.wasteUnsynced && !r.waste?.events)) {
+      s.waste = r.waste?.events ? r.waste : null;
+      s.wasteUnsynced = false;
+    }
     s.sync.name = r.name;
     save(s);
     return ctx.onChange({ type: 'remote', kind });

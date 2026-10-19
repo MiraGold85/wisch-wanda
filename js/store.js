@@ -43,6 +43,8 @@ export function migrate(state) {
   state.sync ??= null;
   state.history ??= [];
   state.waste ??= null;
+  // Vor Einführung der Markierung geladene Kalender sicherheitshalber als „noch hochzuladen“ behandeln.
+  if (state.waste && state.sync && state.wasteUnsynced === undefined) state.wasteUnsynced = true;
   return state;
 }
 
@@ -211,6 +213,7 @@ export function toggleAssignment(state, id, key, memberId) {
 
 export function setWaste(state, waste) {
   state.waste = waste;
+  state.wasteUnsynced = Boolean(state.sync);
   push(state, [{ kind: 'waste', op: 'update', value: waste }]);
 }
 
