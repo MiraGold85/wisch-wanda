@@ -535,7 +535,7 @@ let wasteMessage = '';
 function wasteSettings() {
   const w = state.waste;
   const msg = wasteMessage ? `<p class="import-msg">${esc(wasteMessage)}</p>` : '';
-  const upload = (label, cls) => `<label class="btn ${cls}">${label}<input type="file" id="waste-import" hidden></label>`;
+  const upload = (label, cls) => `<label class="btn ${cls}" for="waste-import">${label}</label>`;
   if (!w) {
     return section({
       icon: '🗑️', title: 'Abfallkalender',
@@ -625,7 +625,7 @@ function viewSettings() {
       body: `
         <div class="row wrap">
           <button class="btn ghost" data-action="export">Sicherung herunterladen</button>
-          ${state.sync ? '' : '<label class="btn ghost">Sicherung laden<input type="file" accept="application/json" id="import" hidden></label>'}
+          ${state.sync ? '' : '<label class="btn ghost" for="import">Sicherung laden</label>'}
         </div>
         ${state.sync ? '' : '<button class="btn danger" data-action="reset">Alles zurücksetzen</button>'}`,
     })}
@@ -1132,6 +1132,7 @@ document.addEventListener('change', (ev) => {
     saveSettings(state);
   } else if (el.id === 'import') {
     importBackup(el.files[0]);
+    el.value = '';
   } else if (el.id === 'waste-import') {
     importWasteFile(el.files[0]);
     el.value = '';

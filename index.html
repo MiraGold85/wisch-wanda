@@ -33,6 +33,11 @@
   <div id="overlay" class="overlay" hidden></div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
+  <!-- Datei-Felder liegen außerhalb der neu gezeichneten Bereiche: Auf dem Handy
+       kommt die Datei erst nach der Rückkehr aus der Dateiauswahl an. -->
+  <input type="file" id="waste-import" hidden>
+  <input type="file" id="import" accept="application/json,.json" hidden>
+
   <script type="module" src="js/app.js"></script>
 </body>
 </html>
