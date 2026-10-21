@@ -101,6 +101,17 @@ Familien-Code beitreten, die Person antippen und den Code eingeben (gilt 24 Stun
 > neu eingerichtet wurde), im SQL Editor einmal ausführen – Namen anpassen:
 > `update members set role = 'parent' where name in ('Eva', 'Christian');`
 
+## Beweisfotos einrichten (ca. 1 Minute)
+
+Damit man beim Zuschicken „📷 Foto als Beweis“ verlangen und Fotos anhängen kann:
+
+1. Die Datei [`supabase/005_fotos.sql`](supabase/005_fotos.sql) öffnen → **„Copy raw file“**.
+2. Im Supabase **SQL Editor** eine neue Abfrage öffnen, einfügen, **„Run“** (Nachfrage bestätigen).
+
+Die Fotos liegen in einem **privaten** Speicher („wanda-fotos“) – nur die eigene Familie kann sie sehen.
+Sie werden vor dem Hochladen verkleinert (ca. 100–200 KB pro Foto); der kostenlose Speicher reicht
+für mehrere tausend Fotos.
+
 ## Gut zu wissen
 
 - Kostenlose Supabase-Projekte schlafen ein, wenn eine Woche lang niemand die App benutzt.

@@ -40,11 +40,14 @@ const SPECS = {
       id: a.id, task_id: a.taskId ?? null, title: a.title ?? null, points: a.points ?? 10,
       to_member: a.to, from_member: a.from ?? null, due_date: a.due || null, note: a.note || null,
       created_at: a.createdAt, done_at: a.doneAt || null, done_by: a.doneBy || null, completion_id: a.completionId || null,
+      // Fotos gibt es erst mit 005_fotos.sql – nur mitschicken, wenn benutzt.
+      ...(a.photo ? { photo: true } : {}), ...(a.photoPath ? { photo_path: a.photoPath } : {}),
     }),
     fromRow: (r) => ({
       id: r.id, taskId: r.task_id, title: r.title, points: r.points, to: r.to_member, from: r.from_member,
       due: r.due_date, note: r.note || '', createdAt: r.created_at, doneAt: r.done_at, doneBy: r.done_by,
       completionId: r.completion_id,
+      ...(r.photo ? { photo: true } : {}), ...(r.photo_path ? { photoPath: r.photo_path } : {}),
     }),
   },
   plan: {
@@ -400,6 +403,9 @@ async function loadRights() {
     s.rightsEnabled = true;
     s.isFounder = !!data.is_founder;
   }
+  // Beweisfotos gibt es, sobald die Spalte existiert (005_fotos.sql)
+  const photos = await c.from('assignments').select('photo_path').limit(1);
+  if (!photos.error || !isNetwork(photos.error)) s.photosEnabled = !photos.error;
   save(s);
 }
 
@@ -552,3 +558,24 @@ export async function deletePushSubscription(endpoint) {
 
 // Für Tests: Realtime-Ereignis simulieren.
 export const _onRemote = onRemote;
+
+// ---------- Beweisfotos ----------
+
+const PHOTO_BUCKET = 'wanda-fotos';
+
+export async function uploadPhoto(blob, assignmentId) {
+  await ensureSession();
+  const c = await getClient();
+  const path = `${hid()}/${assignmentId}-${Date.now()}.jpg`;
+  const { error } = await c.storage.from(PHOTO_BUCKET).upload(path, blob, { contentType: 'image/jpeg' });
+  if (error) throw Object.assign(new Error(error.message || 'Hochladen fehlgeschlagen'), { network: /fetch|network/i.test(error.message || '') });
+  return path;
+}
+
+export async function photoUrl(path) {
+  await ensureSession();
+  const c = await getClient();
+  const { data, error } = await c.storage.from(PHOTO_BUCKET).createSignedUrl(path, 3600);
+  if (error) throw new Error(error.message);
+  return data.signedUrl;
+}

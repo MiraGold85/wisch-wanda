@@ -433,3 +433,6 @@ input[type="number"] { width: 72px; }
 .devices .rank-body small { color: var(--muted); }
 .code-box { display: grid; gap: 8px; padding: 12px; border-radius: 14px; background: color-mix(in srgb, var(--sun) 22%, var(--card)); }
 .big-emoji { font-size: 56px; }
+.overdue { border: 2px solid color-mix(in srgb, var(--red) 45%, transparent); }
+.proof { width: 100%; border-radius: 14px; box-shadow: var(--shadow); }
+.sheet .close { position: relative; z-index: 1; }

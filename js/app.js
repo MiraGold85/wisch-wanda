@@ -6,7 +6,7 @@ import {
   load, save, freshState, migrate, roomName, roomEmoji, planFor, doneEntry, toggleTask, memberPoints, familyPoints,
   effectiveTasks, setPusher, newId, addAssignment, deleteAssignment, toggleAssignment, assignmentTitle, assignmentPoints,
   saveMember, removeMember, saveTask, removeTask, saveSettings, setWaste, toggleWaste,
-  syncStreakBonus, toggleClaim, claimOf, cleanupClaims,
+  syncStreakBonus, toggleClaim, claimOf, cleanupClaims, setAssignmentPhoto,
   isPrivateRoom, roomOwners, privateRooms, ownedRooms, unassignedPrivateRooms, toggleRoomOwner,
 } from './store.js';
 import { personalStreak, nextMilestone, badgesFor, isClaim } from './rewards.js';
@@ -184,11 +184,66 @@ function completeWaste(key, ev) {
 function completeAssignment(id, ev) {
   const a = state.assignments.find((x) => x.id === id);
   if (!a) return;
+  if (a.photo && !a.doneAt && !a.photoPath && state.photosEnabled) {
+    toast('📷 Hier ist ein Foto als Beweis gewünscht – mach eins!');
+    return takePhoto(id);
+  }
   const before = earnedIds();
   const entry = toggleAssignment(state, id, today(), me().id);
   if (entry) celebrate(entry, (task(a.taskId)?.effort ?? 0) >= 4 || entry.points >= 35, ev);
   rewardCheck(before);
   render();
+}
+
+// ---------- Beweisfotos ----------
+
+let photoFor = null; // Zuschickung, zu der gerade ein Foto aufgenommen wird
+
+function takePhoto(id) {
+  photoFor = id;
+  document.getElementById('photo-input').click();
+}
+
+// Auf höchstens 1280 Pixel verkleinern – spart Speicher und Datenvolumen.
+async function shrinkPhoto(file) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 1280 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.75));
+}
+
+async function handlePhoto(file) {
+  const id = photoFor;
+  photoFor = null;
+  const a = state.assignments.find((x) => x.id === id);
+  if (!file || !a) return;
+  toast('📷 Foto wird hochgeladen …', 8000);
+  try {
+    const path = await sync.uploadPhoto(await shrinkPhoto(file), id);
+    setAssignmentPhoto(state, id, path);
+    if (!a.doneAt) completeAssignment(id);
+    else toast('📷 Foto nachgereicht ✓');
+  } catch (e) {
+    toast(e.network || !navigator.onLine
+      ? 'Ohne Internet kann kein Foto hochgeladen werden – bitte später noch mal.'
+      : `Das Foto konnte nicht hochgeladen werden: ${e.message}`, 5000);
+  }
+  render();
+}
+
+function renderPhotoSheet() {
+  const a = state.assignments.find((x) => x.id === sheet.id);
+  $overlay.innerHTML = `
+    <div class="sheet center">
+      <button type="button" class="icon-btn close" data-action="close-sheet" aria-label="Schließen">✕</button>
+      <h2>📷 ${esc(a ? assignmentTitle(state, a) : 'Foto')}</h2>
+      <p class="hint">${a?.doneBy ? `erledigt von ${who(a.doneBy)}` : ''}${a?.doneAt ? ` · ${shortDate(a.doneAt)}` : ''}</p>
+      ${sheet.url ? `<img class="proof" src="${esc(sheet.url)}" alt="Beweisfoto">` : `<p>${sheet.error ? esc(sheet.error) : 'Foto wird geladen …'}</p>`}
+      <button class="btn big" data-action="close-sheet">Schließen</button>
+    </div>`;
 }
 
 const goalReached = (g) => !!g.reachedAt || familyPoints(state, g.since) >= g.points;
@@ -271,6 +326,8 @@ function assignRow(a, opts = {}) {
   if (a.doneAt) sub.push(`✓ erledigt${a.doneBy && a.doneBy !== a.to ? ` von ${who(a.doneBy)}` : ''}`);
   else if (a.due) sub.push(deadline(a.due));
   if (a.note) sub.push(`„${esc(a.note)}“`);
+  if (a.photoPath) sub.push('📷 mit Foto');
+  else if (a.photo && !a.doneAt) sub.push('<span class="late">📷 Foto als Beweis</span>');
   const t = task(a.taskId);
   // In der Übersicht nur anzeigen – abhaken kann die Person selbst unter „Für dich“.
   const tag = opts.showTo ? 'div' : 'button';
@@ -283,8 +340,16 @@ function assignRow(a, opts = {}) {
       </span>
       <span class="pts">+${assignmentPoints(state, a)}</span>
     </${tag}>`;
-  if (!opts.removable || (a.from !== me().id && !canManage())) return check;
-  return `<div class="task-wrap">${check}<button class="send-btn" data-unassign="${esc(a.id)}" aria-label="Zurückziehen" title="Zurückziehen">✕</button></div>`;
+  const buttons = [];
+  if (a.photoPath) {
+    buttons.push(`<button class="send-btn" data-view-photo="${esc(a.id)}" aria-label="Foto ansehen" title="Foto ansehen">🖼️</button>`);
+  } else if (!opts.showTo && state.photosEnabled && state.sync && a.to === me().id) {
+    buttons.push(`<button class="send-btn" data-photo="${esc(a.id)}" aria-label="Foto" title="${a.doneAt ? 'Foto nachreichen' : 'Mit Foto erledigen'}">📷</button>`);
+  }
+  if (opts.removable && (a.from === me().id || canManage())) {
+    buttons.push(`<button class="send-btn" data-unassign="${esc(a.id)}" aria-label="Zurückziehen" title="Zurückziehen">✕</button>`);
+  }
+  return buttons.length ? `<div class="task-wrap">${check}${buttons.join('')}</div>` : check;
 }
 
 // Tonnen von heute nur bis mittags zeigen – danach ist die Abfuhr meist durch.
@@ -383,6 +448,17 @@ function ownTasks(key) {
 }
 
 // Besitz eines Raums: antippbare Knöpfe – mehrere Personen möglich (z. B. Elternschlafzimmer)
+// Alles, was heute fällig oder schon überfällig ist und nicht im Tagesplan steht.
+// Maßgeblich ist der Stand von heute früh – so bleibt Erledigtes heute sichtbar (abgehakt).
+let showAllDue = false;
+function dueOutsidePlan(key, exclude) {
+  const morning = effectiveTasks({ ...state, history: state.history.filter((h) => h.date < key) });
+  const priv = privateRooms(state);
+  return morning
+    .filter((t) => !exclude.has(t.id) && !priv.includes(t.room) && daysUntilDue(t, key) <= 0)
+    .sort((a, b) => daysUntilDue(a, key) - daysUntilDue(b, key) || b.effort - a.effort);
+}
+
 function ownerChips(id) {
   const owners = roomOwners(state, id);
   const shared = !isPrivateRoom(state, id);
@@ -450,6 +526,20 @@ function viewToday() {
 
   const cards = [];
   const row = (id) => taskRow(id, { claim: true });
+  const due = dueOutsidePlan(key, new Set(ids));
+  const dueOpen = due.filter((t) => !doneEntry(state, t.id, key));
+  let dueCard = '';
+  if (due.length) {
+    const shown = showAllDue ? due : due.slice(0, 6);
+    dueCard = section({
+      icon: '🔴', title: 'Fällig & überfällig', cls: 'overdue',
+      meta: dueOpen.length
+        ? `${dueOpen.length} ${dueOpen.length === 1 ? 'Aufgabe wartet' : 'Aufgaben warten'} außerhalb des Tagesplans – wer schafft eine?`
+        : 'Alles abgearbeitet – stark! 💪',
+      body: `${shown.map((t) => taskRow(t.id, { claim: true, showRoom: true, due: t })).join('')}
+        ${due.length > shown.length ? `<button class="btn ghost" data-action="show-all-due">Alle ${due.length} anzeigen</button>` : ''}`,
+    });
+  }
   if (mine.length) {
     cards.push(section({
       icon: '📨', title: 'Für dich', meta: 'Aufgaben, die dir jemand zugeschickt hat', cls: 'for-you',
@@ -485,6 +575,7 @@ function viewToday() {
       body: bins.map(wasteRow).join(''),
     }));
   }
+  if (dueCard) cards.push(dueCard);
   cards.push(`
     <label class="quick">
       <input type="checkbox" data-action="quick" ${isQuick() ? 'checked' : ''}>
@@ -1058,6 +1149,7 @@ function renderSendSheet() {
       </div>
       <h3>Nachricht <small>(optional)</small></h3>
       <input type="text" name="note" maxlength="300" placeholder="z. B. Oma kommt am Samstag 😉">
+      ${state.photosEnabled && state.sync ? '<label class="check-line"><input type="checkbox" name="photo"> 📷 Foto als Beweis verlangen</label>' : ''}
       <button class="btn big" type="submit">Zuschicken</button>
     </form>`;
 }
@@ -1170,7 +1262,7 @@ function renderOverlay() {
   else if (!state.onboarded) fn = renderOnboarding;
   else if (needsPicker()) fn = renderPicker;
   else if (timer) fn = renderTimer;
-  else if (sheet) fn = { send: renderSendSheet, create: renderCreateSheet, invite: renderInviteSheet, code: renderCodeSheet }[sheet.type];
+  else if (sheet) fn = { send: renderSendSheet, create: renderCreateSheet, invite: renderInviteSheet, code: renderCodeSheet, photo: renderPhotoSheet }[sheet.type];
   $overlay.hidden = !fn;
   if (fn) fn();
   else $overlay.innerHTML = '';
@@ -1303,7 +1395,7 @@ function clearJoinHash() {
 // ---------- Ereignisse ----------
 
 document.addEventListener('click', (ev) => {
-  const el = ev.target.closest('[data-task],[data-assign],[data-waste],[data-owner-room],[data-parent-pick],[data-member-code],[data-claim],[data-claim-waste],[data-send-waste],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
+  const el = ev.target.closest('[data-task],[data-assign],[data-waste],[data-owner-room],[data-parent-pick],[data-photo],[data-view-photo],[data-member-code],[data-claim],[data-claim-waste],[data-send-waste],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
   if (!el || el.matches('input')) return;
   const d = el.dataset;
   if (d.task) return complete(d.task, ev);
@@ -1352,6 +1444,16 @@ document.addEventListener('click', (ev) => {
       return render();
     }
     return pickMember(d.pick);
+  }
+  if (d.photo) return takePhoto(d.photo);
+  if (d.viewPhoto) {
+    const a = state.assignments.find((x) => x.id === d.viewPhoto);
+    if (!a?.photoPath) return;
+    openSheet({ type: 'photo', id: a.id });
+    sync.photoUrl(a.photoPath)
+      .then((url) => { if (sheet?.id === a.id) { sheet.url = url; renderOverlay(); } })
+      .catch((e) => { if (sheet?.id === a.id) { sheet.error = `Foto konnte nicht geladen werden: ${e.message}`; renderOverlay(); } });
+    return;
   }
   if (d.parentPick) {
     parentPick = parentPick.includes(d.parentPick) ? parentPick.filter((x) => x !== d.parentPick) : [...parentPick, d.parentPick];
@@ -1526,6 +1628,9 @@ document.addEventListener('click', (ev) => {
           render();
         })
         .catch((e) => toast(`Das hat nicht geklappt: ${e.message}`, 4000));
+    case 'show-all-due':
+      showAllDue = true;
+      return render();
     case 'remove-waste':
       if (!confirm(`Abfallkalender „${state.waste.name}“ entfernen?`)) return;
       setWaste(state, null);
@@ -1588,6 +1693,9 @@ document.addEventListener('change', (ev) => {
       .catch((e) => toast(`Konnte nicht gespeichert werden: ${e.message}`, 5000));
   } else if (el.id === 'import') {
     importBackup(el.files[0]);
+    el.value = '';
+  } else if (el.id === 'photo-input') {
+    handlePhoto(el.files[0]);
     el.value = '';
   } else if (el.id === 'waste-import') {
     importWasteFile(el.files[0]);
@@ -1674,6 +1782,7 @@ document.addEventListener('submit', async (ev) => {
       points: taskId ? pointsFor(task(taskId)) : POINTS[f.get('effort')] ?? 10,
       due: f.get('due') || null,
       note: String(f.get('note') || '').trim(),
+      ...(f.get('photo') ? { photo: true } : {}),
     });
     toast(`📨 „${assignmentTitle(state, a)}“ an ${member(to).name} geschickt`);
     closeSheet();

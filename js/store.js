@@ -38,6 +38,7 @@ export function freshState(today = dateKey()) {
     push: null, // Benachrichtigungen auf diesem Handy { endpoint, remindHour, waste }
     rightsEnabled: false, // Eltern-Rechte aktiv (Server hat 004_eltern.sql)
     isFounder: false, // dieses Handy hat die Familie gegründet
+    photosEnabled: false, // Beweisfotos möglich (Server hat 005_fotos.sql)
     outbox: [],
   };
 }
@@ -214,6 +215,13 @@ export function addAssignment(state, data) {
   state.assignments.push(a);
   push(state, [{ kind: 'assignment', op: 'upsert', value: a }]);
   return a;
+}
+
+export function setAssignmentPhoto(state, id, path) {
+  const a = state.assignments.find((x) => x.id === id);
+  if (!a) return;
+  a.photoPath = path;
+  push(state, [{ kind: 'assignment', op: 'upsert', value: a }]);
 }
 
 export function deleteAssignment(state, id) {
