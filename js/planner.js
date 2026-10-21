@@ -176,12 +176,16 @@ export function weekIndex(key) {
 
 // ---------- Aufgaben ----------
 
+// Startwert schätzen: über das Intervall verteilt, damit nicht alles auf einmal fällig ist.
+export function spreadLastDone(id, interval, todayKey) {
+  const ago = interval <= 1 ? 1 : hash(id) % interval;
+  return addDays(todayKey, -ago);
+}
+
 export function defaultTasks(todayKey) {
   return CATALOG.map(([room, name, interval, effort]) => {
     const id = `${room}-${slug(name)}`;
-    // Startwerte schätzen: über das Intervall verteilt, damit nicht alles auf einmal fällig ist.
-    const ago = interval <= 1 ? 1 : hash(id) % interval;
-    return { id, room, name, interval, effort, lastDone: addDays(todayKey, -ago) };
+    return { id, room, name, interval, effort, lastDone: spreadLastDone(id, interval, todayKey) };
   });
 }
 

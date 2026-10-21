@@ -1,6 +1,6 @@
 // Datenhaltung: alles liegt lokal auf dem Gerät. Ist die Familie verbunden,
 // wird jede Änderung zusätzlich als „Op“ an den Sync weitergereicht.
-import { ROOMS, POINTS, DEFAULT_PRIVATE, defaultTasks, buildPlan, dateKey, addDays, dayNum } from './planner.js';
+import { ROOMS, POINTS, DEFAULT_PRIVATE, defaultTasks, buildPlan, dateKey, addDays, dayNum, spreadLastDone } from './planner.js';
 import { WASTE_POINTS, wasteDone } from './waste.js';
 import { MILESTONES, milestoneTitle, personalStreak, isClaim } from './rewards.js';
 
@@ -26,6 +26,7 @@ export function freshState(today = dateKey()) {
     tasks: defaultTasks(today),
     roomNames: {},
     roomOwners: {}, // Raum → Liste der Besitzer (privat) oder 'shared'; ohne Eintrag gilt DEFAULT_PRIVATE
+    pausedRooms: {}, // Raum → seit wann pausiert (z. B. Renovierung)
     members: [{ id: 'm1', name: 'Mama', emoji: '👩' }],
     currentMember: 'm1',
     history: [],
@@ -51,6 +52,7 @@ export function migrate(state) {
   state.waste ??= null;
   state.push ??= null;
   state.roomOwners ??= {};
+  state.pausedRooms ??= {};
   // Vor Einführung der Markierung geladene Kalender sicherheitshalber als „noch hochzuladen“ behandeln.
   if (state.waste && state.sync && state.wasteUnsynced === undefined) state.wasteUnsynced = true;
   return state;
@@ -99,9 +101,37 @@ export function roomOwners(state, id) {
 }
 
 export const privateRooms = (state) => ROOMS.map((r) => r.id).filter((id) => isPrivateRoom(state, id));
-export const ownedRooms = (state, memberId) => privateRooms(state).filter((id) => roomOwners(state, id).includes(memberId));
+export const isPaused = (state, id) => Boolean(state.pausedRooms?.[id]);
+// Nicht in der gemeinsamen Planung: private und pausierte Räume
+export const excludedRooms = (state) => ROOMS.map((r) => r.id).filter((id) => isPrivateRoom(state, id) || isPaused(state, id));
+export const ownedRooms = (state, memberId) => privateRooms(state).filter((id) => !isPaused(state, id) && roomOwners(state, id).includes(memberId));
 // Private Räume, die noch niemandem gehören
-export const unassignedPrivateRooms = (state) => privateRooms(state).filter((id) => !roomOwners(state, id).length);
+export const unassignedPrivateRooms = (state) => privateRooms(state).filter((id) => !isPaused(state, id) && !roomOwners(state, id).length);
+
+const householdValue = (state) => ({ roomNames: state.roomNames, goal: state.goal, roomOwners: state.roomOwners, pausedRooms: state.pausedRooms });
+
+// Raum pausieren (z. B. Renovierung) oder wieder aktivieren. Beim Aktivieren starten die
+// Aufgaben frisch – über ihr Intervall verteilt, damit nicht alles auf einmal überfällig ist.
+export function setRoomPaused(state, id, paused) {
+  const key = dateKey();
+  const ops = [];
+  if (paused) {
+    state.pausedRooms = { ...state.pausedRooms, [id]: key };
+  } else {
+    const { [id]: _, ...rest } = state.pausedRooms;
+    state.pausedRooms = rest;
+    for (const t of state.tasks.filter((x) => x.room === id)) {
+      t.lastDone = spreadLastDone(t.id, t.interval, key);
+      ops.push({ kind: 'task', op: 'upsert', value: t });
+    }
+  }
+  state.plans[key] = buildPlan(effectiveTasks(state), key, excludedRooms(state));
+  push(state, [
+    { kind: 'household', op: 'update', value: householdValue(state) },
+    ...ops,
+    { kind: 'plan', op: 'upsert', value: state.plans[key] },
+  ]);
+}
 
 // Person als Besitzer an- oder abwählen bzw. den Raum gemeinsam machen ('shared').
 export function toggleRoomOwner(state, id, who) {
@@ -114,9 +144,9 @@ export function toggleRoomOwner(state, id, who) {
 export function setRoomOwner(state, id, owner) {
   state.roomOwners = { ...state.roomOwners, [id]: owner };
   const key = dateKey();
-  state.plans[key] = buildPlan(effectiveTasks(state), key, privateRooms(state));
+  state.plans[key] = buildPlan(effectiveTasks(state), key, excludedRooms(state));
   push(state, [
-    { kind: 'household', op: 'update', value: { roomNames: state.roomNames, goal: state.goal, roomOwners: state.roomOwners } },
+    { kind: 'household', op: 'update', value: householdValue(state) },
     { kind: 'plan', op: 'upsert', value: state.plans[key] },
   ]);
 }
@@ -140,7 +170,7 @@ export function effectiveTasks(state) {
 // Plan des Tages holen oder einmalig erzeugen.
 export function planFor(state, key) {
   if (!state.plans[key]) {
-    state.plans[key] = buildPlan(effectiveTasks(state), key, privateRooms(state));
+    state.plans[key] = buildPlan(effectiveTasks(state), key, excludedRooms(state));
     const cutoff = dayNum(addDays(key, -PLAN_KEEP_DAYS));
     for (const k of Object.keys(state.plans)) if (dayNum(k) < cutoff) delete state.plans[k];
     push(state, [{ kind: 'plan', op: 'insertIgnore', value: state.plans[key] }]);
@@ -371,7 +401,7 @@ export function removeTask(state, id) {
 }
 
 export function saveSettings(state) {
-  push(state, [{ kind: 'household', op: 'update', value: { roomNames: state.roomNames, goal: state.goal, roomOwners: state.roomOwners } }]);
+  push(state, [{ kind: 'household', op: 'update', value: householdValue(state) }]);
 }
 
 // ---------- Punkte ----------

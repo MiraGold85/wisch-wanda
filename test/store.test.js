@@ -103,3 +103,20 @@ test('Elternschlafzimmer gehört zwei Personen', async () => {
   toggleRoomOwner(state, 'schlafzimmer', 'papa');
   assert.deepEqual(roomOwners(state, 'schlafzimmer'), ['papa'], 'aus „gemeinsam“ wird privat');
 });
+
+test('Raum pausieren: raus aus der Planung, beim Aktivieren frischer Start', async () => {
+  const { setRoomPaused, isPaused, excludedRooms, toggleRoomOwner, effectiveTasks } = await import('../js/store.js');
+  const { dueRatio, dateKey } = await import('../js/planner.js');
+  const { state } = setup();
+  toggleRoomOwner(state, 'kind2', 'shared'); // wie bei Kayne: Zimmer gemeinsam, aber leer
+  for (const t of state.tasks.filter((x) => x.room === 'kind2')) t.lastDone = '2026-01-01';
+  setRoomPaused(state, 'kind2', true);
+  assert.ok(isPaused(state, 'kind2'));
+  assert.ok(excludedRooms(state).includes('kind2'));
+  const plan = state.plans[dateKey()];
+  assert.ok(plan.rounds.every((r) => r.room !== 'kind2') && plan.focusRoom !== 'kind2');
+  setRoomPaused(state, 'kind2', false);
+  assert.ok(!isPaused(state, 'kind2'));
+  const overdue = effectiveTasks(state).filter((t) => t.room === 'kind2' && dueRatio(t, dateKey()) > 1);
+  assert.equal(overdue.length, 0, 'nach dem Aktivieren ist nichts überfällig');
+});

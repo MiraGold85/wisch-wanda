@@ -436,3 +436,5 @@ input[type="number"] { width: 72px; }
 .overdue { border: 2px solid color-mix(in srgb, var(--red) 45%, transparent); }
 .proof { width: 100%; border-radius: 14px; box-shadow: var(--shadow); }
 .sheet .close { position: relative; z-index: 1; }
+.room.paused { opacity: .6; }
+.paused-note { color: var(--muted); margin-left: 6px; }

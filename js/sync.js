@@ -57,12 +57,13 @@ const SPECS = {
   },
 };
 
-// Raum-Besitz liegt mit in room_names (Schlüssel „__owners“), damit keine neue Spalte nötig ist.
-const packRooms = ({ roomNames, roomOwners }) => ({ ...roomNames, __owners: roomOwners || {} });
+// Raum-Besitz und Pausen liegen mit in room_names („__owners“, „__paused“), damit keine neue Spalte nötig ist.
+const packRooms = ({ roomNames, roomOwners, pausedRooms }) => ({ ...roomNames, __owners: roomOwners || {}, __paused: pausedRooms || {} });
 function unpackRooms(s, raw) {
-  const { __owners: owners, ...names } = raw || {};
+  const { __owners: owners, __paused: paused, ...names } = raw || {};
   s.roomNames = names;
   if (owners) s.roomOwners = owners;
+  if (paused) s.pausedRooms = paused;
 }
 
 let ctx = null; // { getState, onChange(event), onStatus(status) }
@@ -476,7 +477,7 @@ export async function createFamily(name) {
   // Alles Bisherige hochladen.
   const today = dateKey();
   s.outbox = [
-    { kind: 'household', op: 'update', value: { roomNames: s.roomNames, goal: s.goal, roomOwners: s.roomOwners } },
+    { kind: 'household', op: 'update', value: { roomNames: s.roomNames, goal: s.goal, roomOwners: s.roomOwners, pausedRooms: s.pausedRooms } },
     { kind: 'member', op: 'upsert', value: s.members },
     { kind: 'task', op: 'upsert', value: s.tasks },
     ...(s.history.length ? [{ kind: 'completion', op: 'upsert', value: dedupeCompletions(s.history) }] : []),

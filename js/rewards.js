@@ -28,7 +28,7 @@ export function nextMilestone(streak) {
 // Räume, die für „Rundum sauber“ zählen: gemeinsame plus die eigenen privaten
 function roomsFor(state, memberId) {
   return ROOMS.map((r) => r.id).filter((id) => {
-    if (id === 'alltag') return false;
+    if (id === 'alltag' || state.pausedRooms?.[id]) return false;
     const o = state.roomOwners?.[id];
     const isPrivate = o === undefined ? DEFAULT_PRIVATE.includes(id) : o !== 'shared';
     return !isPrivate || [].concat(o ?? []).includes(memberId);

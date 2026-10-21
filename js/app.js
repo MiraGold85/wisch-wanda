@@ -8,6 +8,7 @@ import {
   saveMember, removeMember, saveTask, removeTask, saveSettings, setWaste, toggleWaste,
   syncStreakBonus, toggleClaim, claimOf, cleanupClaims, setAssignmentPhoto,
   isPrivateRoom, roomOwners, privateRooms, ownedRooms, unassignedPrivateRooms, toggleRoomOwner,
+  isPaused, excludedRooms, setRoomPaused,
 } from './store.js';
 import { personalStreak, nextMilestone, badgesFor, isClaim } from './rewards.js';
 import { importWaste, importFromSchichtplaner, wasteDue, wasteDone, nextPickups, wasteIcon, WASTE_POINTS } from './waste.js';
@@ -426,7 +427,7 @@ function nextBinChip() {
 
 // Gespeicherte Pläne können noch private Räume enthalten (z. B. vor der Zuordnung erstellt).
 function withoutPrivate(plan) {
-  const priv = privateRooms(state);
+  const priv = excludedRooms(state);
   const roomOf = (id) => task(id)?.room;
   return {
     ...plan,
@@ -453,7 +454,7 @@ function ownTasks(key) {
 let showAllDue = false;
 function dueOutsidePlan(key, exclude) {
   const morning = effectiveTasks({ ...state, history: state.history.filter((h) => h.date < key) });
-  const priv = privateRooms(state);
+  const priv = excludedRooms(state);
   return morning
     .filter((t) => !exclude.has(t.id) && !priv.includes(t.room) && daysUntilDue(t, key) <= 0)
     .sort((a, b) => daysUntilDue(a, key) - daysUntilDue(b, key) || b.effort - a.effort);
@@ -629,6 +630,16 @@ function viewRooms() {
   const tasks = effectiveTasks(state);
   const visible = (id) => !isPrivateRoom(state, id) || roomOwners(state, id).includes(me().id);
   const roomCards = ROOMS.map((r) => {
+    if (isPaused(state, r.id)) {
+      return `
+      <section class="card room private paused">
+        <div class="room-head">
+          <span class="dot private"></span>
+          <span class="room-name">${r.emoji} ${esc(roomName(state, r.id))}</span>
+          <span class="room-meta">⏸️ pausiert</span>
+        </div>
+      </section>`;
+    }
     if (!visible(r.id)) {
       const owners = roomOwners(state, r.id);
       return `
@@ -655,7 +666,7 @@ function viewRooms() {
         ${open ? `<div class="room-tasks">${list.map((t) => taskRow(t.id, { due: t, send: state.members.length > 1 && !mine })).join('')}</div>` : ''}
       </section>`;
   });
-  const shown = ROOMS.filter((r) => visible(r.id));
+  const shown = ROOMS.filter((r) => visible(r.id) && !isPaused(state, r.id));
   const green = shown.filter((r) => roomStatus(tasks, r.id, key).level === 'green').length;
   return `
     <section class="hero slim">
@@ -944,6 +955,9 @@ function viewSettings() {
       <div class="row"><span class="row-emoji">${r.emoji}</span>
         <input type="text" maxlength="40" value="${esc(roomName(state, r.id))}" data-room-name="${r.id}" aria-label="Raumname"></div>
       <div class="owner-line">${ownerChips(r.id)}</div>
+      <div class="owner-line">${isPaused(state, r.id)
+        ? `<button class="btn ghost small" data-pause-room="${r.id}" data-pause="off">▶️ Wieder aktivieren</button> <small class="paused-note">⏸️ pausiert seit ${shortDate(state.pausedRooms[r.id])}</small>`
+        : `<button class="btn ghost small" data-pause-room="${r.id}" data-pause="on">⏸️ Pausieren</button>`}</div>
     </div>`).join('');
 
   const effortOpts = (sel) => Object.entries(EFFORT_LABELS).map(([v, l]) => `<option value="${v}" ${+v === sel ? 'selected' : ''}>${l}</option>`).join('');
@@ -991,7 +1005,7 @@ function viewSettings() {
         <label class="check-line"><input type="checkbox" data-goal="loserPays" ${state.goal.loserPays !== false ? 'checked' : ''}> 🍕 Wer am wenigsten beiträgt, spendiert die Belohnung</label>
         <button class="btn ghost" data-action="new-goal">Ziel neu starten (Punkte ab heute zählen)</button>`,
     })}
-    ${section({ icon: '🏠', title: 'Räume', meta: 'Name und wem der Raum gehört. 🔒 Private Räume sind nicht in der gemeinsamen Runde – nur die Besitzerin bekommt sie angezeigt.', body: roomsEdit })}
+    ${section({ icon: '🏠', title: 'Räume', meta: 'Name und wem der Raum gehört. 🔒 Private Räume sind nicht in der gemeinsamen Runde – nur die Besitzerin bekommt sie angezeigt. ⏸️ Pausierte Räume (z. B. bei Renovierung) tauchen nirgends auf.', body: roomsEdit })}
     ${section({
       icon: '📋', title: 'Aufgaben & Intervalle', meta: 'Unbeliebtheit bestimmt die Punkte: Kleinigkeit 5 … Endgegner 50',
       body: `${tasksEdit}
@@ -1395,12 +1409,20 @@ function clearJoinHash() {
 // ---------- Ereignisse ----------
 
 document.addEventListener('click', (ev) => {
-  const el = ev.target.closest('[data-task],[data-assign],[data-waste],[data-owner-room],[data-parent-pick],[data-photo],[data-view-photo],[data-member-code],[data-claim],[data-claim-waste],[data-send-waste],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
+  const el = ev.target.closest('[data-task],[data-assign],[data-waste],[data-pause-room],[data-owner-room],[data-parent-pick],[data-photo],[data-view-photo],[data-member-code],[data-claim],[data-claim-waste],[data-send-waste],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
   if (!el || el.matches('input')) return;
   const d = el.dataset;
   if (d.task) return complete(d.task, ev);
   if (d.assign) return completeAssignment(d.assign, ev);
   if (d.waste) return completeWaste(d.waste, ev);
+  if (d.pauseRoom) {
+    const on = d.pause === 'on';
+    const name = roomName(state, d.pauseRoom);
+    if (on && !confirm(`${name} pausieren? Der Raum taucht dann nirgends mehr auf, bis du ihn wieder aktivierst.`)) return;
+    setRoomPaused(state, d.pauseRoom, on);
+    toast(on ? `⏸️ ${name} ist pausiert.` : `▶️ ${name} ist wieder dabei – die Aufgaben starten frisch.`, 3500);
+    return render();
+  }
   if (d.ownerRoom) {
     toggleRoomOwner(state, d.ownerRoom, d.owner);
     return render();
