@@ -438,3 +438,5 @@ input[type="number"] { width: 72px; }
 .sheet .close { position: relative; z-index: 1; }
 .room.paused { opacity: .6; }
 .paused-note { color: var(--muted); margin-left: 6px; }
+.task.locked .check { border-style: dashed; opacity: .5; }
+.task.locked { background: color-mix(in srgb, var(--brand-soft) 50%, var(--card)); }

@@ -112,6 +112,17 @@ Die Fotos liegen in einem **privaten** Speicher („wanda-fotos“) – nur die 
 Sie werden vor dem Hochladen verkleinert (ca. 100–200 KB pro Foto); der kostenlose Speicher reicht
 für mehrere tausend Fotos.
 
+## Reservierungen & Erledigungen schützen (ca. 1 Minute)
+
+Damit eine 🙋-Reservierung wirklich gilt und niemand fremde Haken wegnehmen kann:
+
+1. Die Datei [`supabase/006_schutz.sql`](supabase/006_schutz.sql) öffnen → **„Copy raw file“**.
+2. Im Supabase **SQL Editor** eine neue Abfrage öffnen, einfügen, **„Run“** (Nachfrage bestätigen).
+
+Voraussetzung: Die Eltern-Rechte (004) sind schon eingerichtet. Danach gilt, vom Server durchgesetzt:
+- Hat jemand eine Aufgabe übernommen, kann nur diese Person sie an dem Tag abhaken.
+- Einen Haken wegnehmen kann nur, wer die Aufgabe erledigt hat – oder Eltern.
+
 ## Gut zu wissen
 
 - Kostenlose Supabase-Projekte schlafen ein, wenn eine Woche lang niemand die App benutzt.

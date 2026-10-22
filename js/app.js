@@ -157,11 +157,29 @@ function celebrate(entry, big, ev) {
   checkGoal();
 }
 
+// Fremde Erledigung zurücknehmen: nur Eltern (mit Rückfrage) – sonst niemand.
+function mayUndo(done, label) {
+  if (!done || done.member === me().id) return true;
+  const name = member(done.member)?.name ?? 'Jemand';
+  if (rightsOn() && isParent()) return confirm(`${name} hat „${label}“ erledigt. Als Eltern zurücknehmen?`);
+  toast(`✋ Das hat ${name} erledigt – zurücknehmen kann das nur ${name} selbst${rightsOn() ? ' oder die Eltern' : ''}.`, 4000);
+  return false;
+}
+
+// Von jemand anderem übernommen? Dann darf nur diese Person abhaken.
+function claimedByOther(item) {
+  const c = claimOf(state, item, today());
+  if (!c || c.to === me().id) return false;
+  toast(`🙋 Das hat ${member(c.to)?.name ?? 'jemand anderes'} übernommen.`, 3500);
+  return true;
+}
+
 function complete(taskId, ev) {
   const t = task(taskId);
   if (!t) return;
   const done = doneEntry(state, taskId, today());
-  if (done && done.member !== me().id && !confirm(`${member(done.member)?.name ?? 'Jemand'} hat „${t.name}“ heute schon erledigt. Wirklich rückgängig machen?`)) return;
+  if (!mayUndo(done, t.name)) return;
+  if (!done && claimedByOther({ taskId })) return;
   const before = earnedIds();
   const entry = toggleTask(state, taskId, today(), me().id, pointsFor(t));
   if (entry) celebrate(entry, t.effort >= 4, ev);
@@ -174,7 +192,8 @@ function completeWaste(key, ev) {
   const e = state.waste?.events.find((x) => `${x.d}|${x.t}` === key);
   if (!e) return;
   const done = wasteDone(state.history, e);
-  if (done && done.member !== me().id && !confirm(`${member(done.member)?.name ?? 'Jemand'} hat „${e.t}“ schon rausgestellt. Wirklich rückgängig machen?`)) return;
+  if (!mayUndo(done, `${e.t} rausstellen`)) return;
+  if (!done && claimedByOther({ title: `${e.t} rausstellen` })) return;
   const before = earnedIds();
   const entry = toggleWaste(state, e, today(), me().id);
   if (entry) celebrate(entry, false, ev);
@@ -185,6 +204,7 @@ function completeWaste(key, ev) {
 function completeAssignment(id, ev) {
   const a = state.assignments.find((x) => x.id === id);
   if (!a) return;
+  if (a.doneAt && !mayUndo({ member: a.doneBy }, assignmentTitle(state, a))) return;
   if (a.photo && !a.doneAt && !a.photoPath && state.photosEnabled) {
     toast('📷 Hier ist ein Foto als Beweis gewünscht – mach eins!');
     return takePhoto(id);
@@ -279,7 +299,7 @@ function taskRow(id, opts = {}) {
   else if (opts.due) sub.push(dueText(opts.due));
   if (claim) sub.push(claimText(claim));
   const row = `
-    <button class="task ${done ? 'done' : ''} effort-${t.effort}" data-task="${esc(id)}">
+    <button class="task ${done ? 'done' : ''} ${claim && claim.to !== me().id ? 'locked' : ''} effort-${t.effort}" data-task="${esc(id)}">
       <span class="check" aria-hidden="true">${done ? '✓' : ''}</span>
       <span class="task-body">
         <span class="task-name">${esc(t.name)}</span>
@@ -1342,6 +1362,9 @@ function onSyncChange(ev) {
   if (ev.type === 'remote') notifyRemote(ev);
   if (ev.type === 'reload') cleanupClaims(state, today());
   if (ev.type === 'need-pick') renderOverlay();
+  if (ev.type === 'rejected' && ev.kind === 'completion') {
+    toast('✋ Das ging nicht – die Aufgabe hat jemand anderes übernommen oder erledigt.', 4000);
+  }
   if (ev.type === 'rejected' && ev.kind === 'waste') {
     toast('🗑️ Der Abfallkalender ist erst auf diesem Handy. Für die ganze Familie bitte den Datenbank-Nachtrag aus SUPABASE.md ausführen.', 7000);
   }

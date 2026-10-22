@@ -20,6 +20,7 @@ jede Woche ein Raum gründlich – mit Punkten, Serien und einem gemeinsamen Fam
 - **🔒 Private Zimmer:** Kinderzimmer und Elternschlafzimmer gehören einer Person – sie sind nicht in der gemeinsamen Runde; die Besitzerin bekommt „Dein Zimmer“ auf ihrer eigenen Heute-Seite, die anderen sehen nur „privat“.
 - **👑 Eltern-Rechte:** Nur Eltern ändern Personen, Aufgaben, Räume, Familienziel und Abfallkalender; jedes Handy ist fest an eine Person gebunden, neue Handys bekommen einen Einrichtungs-Code der Eltern. Durchgesetzt vom Server (`supabase/004_eltern.sql`).
 - **🔴 Fällig & überfällig:** Was außerhalb des Tagesplans fällig oder überfällig ist, steht ebenfalls auf der Heute-Seite.
+- **🛡️ Fair bleiben:** Was jemand mit 🙋 übernommen hat, kann nur diese Person abhaken; fremde Haken wegnehmen dürfen nur Eltern (`supabase/006_schutz.sql`).
 - **📷 Beweisfotos:** Beim Zuschicken ein Foto verlangen oder freiwillig eins anhängen; liegt privat im Familien-Speicher (`supabase/005_fotos.sql`).
 - **⏸️ Räume pausieren:** z. B. bei Renovierung – der Raum taucht nirgends auf; beim Aktivieren starten die Aufgaben frisch.
 - **🙋 Übernehme ich:** Der Tagesplan gilt für die ganze Familie; jede Person markiert, was sie übernimmt.
