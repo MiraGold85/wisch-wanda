@@ -15,6 +15,9 @@ import { importWaste, importFromSchichtplaner, wasteDue, wasteDone, nextPickups,
 import * as sync from './sync.js';
 import { pushSupport, enablePush, updatePush, disablePush, testPush } from './push.js';
 
+// Bei jeder Veröffentlichung zusammen mit CACHE in sw.js erhöhen.
+const APP_VERSION = 22;
+
 let state = load();
 let tab = 'heute';
 let openRoom = null;
@@ -1055,7 +1058,7 @@ function viewSettings() {
         </div>
         ${state.sync ? '' : '<button class="btn danger" data-action="reset">Alles zurücksetzen</button>'}`,
     })}
-    <p class="hint center">Wisch-Wanda · Stufe 2 (Familien-Sync)</p>`;
+    <p class="hint center">Wisch-Wanda · Version ${APP_VERSION}</p>`;
 }
 
 // ---------- Timer für die Raum-Runde ----------
@@ -1434,11 +1437,28 @@ function clearJoinHash() {
 }
 
 // ---------- Zurück-Knopf (Android) ----------
-// Ein zusätzlicher Verlaufs-Eintrag fängt „Zurück“ ab: erst Fenster schließen, dann zur Startseite,
-// auf der Startseite zweimal kurz hintereinander = App beenden.
+// Für jede offene Ebene (Fenster/Timer, aufgeklappter Raum, anderer Reiter) plus einmal für die
+// Startseite liegt ein Verlaufs-Eintrag bereit. „Zurück“ schließt eine Ebene; auf der Startseite
+// kommt der Hinweis, und das nächste „Zurück“ beendet die App.
+// Einträge entstehen nur direkt nach einem Antippen – sonst überspringt Chrome sie beim Zurückgehen.
 
-function armBack() {
-  if (!history.state?.wanda) history.pushState({ wanda: true }, '');
+let skipPop = false;
+const backDepth = () => history.state?.wanda ?? 0;
+
+function backLayers() {
+  if (!$overlay.hidden && !timer && !(sheet && sheet.type !== 'join')) return 0; // Einrichtung/„Wer bist du?“
+  return (timer || (sheet && sheet.type !== 'join') ? 1 : 0) + (openRoom && tab === 'raeume' ? 1 : 0) + (tab !== 'heute' ? 1 : 0);
+}
+
+function syncBack() {
+  const want = backLayers() + 1;
+  let d = backDepth();
+  if (d > want) {
+    skipPop = true;
+    history.go(want - d);
+    return;
+  }
+  while (d < want) history.pushState({ wanda: ++d }, '');
 }
 
 function goBack() {
@@ -1450,8 +1470,8 @@ function goBack() {
     closeSheet();
     return true;
   }
-  if (!$overlay.hidden) return false; // Einrichtung/„Wer bist du?“ – da gibt es kein Zurück
-  if (openRoom) {
+  if (!$overlay.hidden) return false;
+  if (openRoom && tab === 'raeume') {
     openRoom = null;
     render();
     return true;
@@ -1466,14 +1486,14 @@ function goBack() {
 }
 
 window.addEventListener('popstate', () => {
-  clearTimeout(armBack.t);
-  if (goBack()) return armBack();
-  // Startseite: kein neuer Eintrag – das nächste „Zurück“ verlässt die App
-  toast('Nochmal „Zurück“ zum Beenden', 2000);
-  armBack.t = setTimeout(armBack, 2000);
+  if (skipPop) {
+    skipPop = false;
+    return;
+  }
+  if (!goBack()) toast('Nochmal „Zurück“ zum Beenden', 2500);
 });
-// Chrome merkt sich den Eintrag nur nach einer Berührung zuverlässig
-document.addEventListener('pointerdown', armBack, { passive: true });
+// Nach jedem Antippen (die App hat dann schon reagiert) die Einträge passend machen.
+document.addEventListener('click', () => setTimeout(syncBack, 0));
 
 // ---------- Ereignisse ----------
 
@@ -1995,4 +2015,3 @@ sync.start({
 
 renderOverlay();
 render();
-armBack();
