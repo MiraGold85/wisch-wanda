@@ -106,3 +106,13 @@ test('Private Aufgaben: nur fällige aus den eigenen Räumen, dringendste zuerst
   assert.ok(list.every((t) => t.room === 'kind1'));
   assert.ok(list.length <= 4);
 });
+
+test('Joker: Countdown bis zum nächsten', () => {
+  const k = (n) => addDays('2026-10-20', n);
+  assert.equal(computeStreak([], '2026-10-20').nextJoker, 7);
+  assert.equal(computeStreak([k(-2), k(-1)].map((date) => ({ date })), '2026-10-20').nextJoker, 5);
+  const week = [-6, -5, -4, -3, -2, -1, 0].map((n) => ({ date: k(n) }));
+  const s = computeStreak(week, '2026-10-20');
+  assert.equal(s.jokers, 1);
+  assert.equal(s.nextJoker, 7);
+});

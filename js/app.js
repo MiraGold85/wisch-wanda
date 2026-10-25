@@ -16,7 +16,7 @@ import * as sync from './sync.js';
 import { pushSupport, enablePush, updatePush, disablePush, testPush } from './push.js';
 
 // Bei jeder Veröffentlichung zusammen mit CACHE in sw.js erhöhen.
-const APP_VERSION = 22;
+const APP_VERSION = 23;
 
 let state = load();
 let tab = 'heute';
@@ -511,7 +511,7 @@ function viewToday() {
   const doneCount = ids.filter((id) => doneEntry(state, id, key)).length + mine.filter((a) => a.doneAt).length
     + bins.filter((e) => wasteDone(state.history, e)).length;
   const pct = total ? doneCount / total : 0;
-  const { streak, jokers, doneToday } = personalStreak(state.history, me().id, key);
+  const { streak, jokers, doneToday, nextJoker } = personalStreak(state.history, me().id, key);
   const next = nextMilestone(streak);
   const todayPts = memberPoints(state, me().id, key);
   const claims = state.assignments.filter((a) => isClaim(a) && a.to === me().id && a.due === key);
@@ -539,7 +539,7 @@ function viewToday() {
         <p class="wanda-says"><img src="icons/wanda.svg" alt="" class="wanda-mini">${line}</p>
         <div class="stats">
           <span class="chip" title="${next ? `Deine Serie – bei ${next.days} Tagen gibt es +${next.points} Bonuspunkte` : 'Deine Serie'}">🔥 ${streak} ${streak === 1 ? 'Tag' : 'Tage'}${doneToday || !streak ? '' : ' – heute noch offen'}</span>
-          <span class="chip" title="Joker retten einen verpassten Tag. Alle 7 aktiven Tage gibt es einen neuen.">🃏 ${jokers}/${MAX_JOKERS}</span>
+          <span class="chip" data-action="joker-info" data-next="${nextJoker ?? ''}">🃏 ${jokers ? `${jokers} Joker` : `Joker in ${nextJoker} ${nextJoker === 1 ? 'Tag' : 'Tagen'}`}</span>
           <span class="chip">⭐ ${todayPts} heute</span>
           ${claims.length ? `<span class="chip" title="Von dir übernommen">🙋 ${claims.length - claimsOpen}/${claims.length}</span>` : ''}
           ${nextBinChip()}
@@ -1621,6 +1621,10 @@ document.addEventListener('click', (ev) => {
       return startTimer(0);
     case 'next-room':
       return startTimer(timer.index + 1);
+    case 'joker-info': {
+      const n = Number(d.next);
+      return toast(`🃏 Ein Joker rettet deine Serie, wenn du einen Tag gar nichts abhakst. Alle 7 Tage am Stück gibt es einen (höchstens ${MAX_JOKERS}).${n ? ` Nächster Joker: noch ${n} ${n === 1 ? 'Tag' : 'Tage'}.` : ''}`, 6000);
+    }
     case 'stop-round':
       return stopTimer();
     case 'pause':

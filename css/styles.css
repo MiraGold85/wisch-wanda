@@ -329,8 +329,8 @@ input[type="number"] { width: 72px; }
 .toast {
   position: fixed; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom)); z-index: 30;
   transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
-  background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 999px;
-  font-weight: 700; font-size: 14.5px; max-width: calc(100vw - 32px); text-align: center;
+  background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 18px;
+  font-weight: 700; font-size: 14.5px; width: max-content; max-width: min(420px, calc(100vw - 32px)); text-align: center;
   transition: opacity .25s, transform .25s;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }

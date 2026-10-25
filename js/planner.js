@@ -321,7 +321,7 @@ export const MAX_JOKERS = 3;
 // Alle 7 aktiven Tage gibt es einen Joker, der einen verpassten Tag rettet.
 export function computeStreak(history, todayKey) {
   const active = new Set(history.map((h) => h.date));
-  if (!active.size) return { streak: 0, jokers: 0, doneToday: false, start: null, best: 0 };
+  if (!active.size) return { streak: 0, jokers: 0, doneToday: false, start: null, best: 0, nextJoker: 7 };
   const first = Math.min(...[...active].map(dayNum));
   const today = dayNum(todayKey);
   let streak = 0;
@@ -346,7 +346,9 @@ export function computeStreak(history, todayKey) {
       start = null;
     }
   }
-  return { streak, jokers, doneToday: active.has(todayKey), start, best };
+  // Wie viele aktive Tage noch bis zum nächsten Joker (null = schon alle)?
+  const nextJoker = jokers < MAX_JOKERS ? 7 - (activeRun % 7) : null;
+  return { streak, jokers, doneToday: active.has(todayKey), start, best, nextJoker };
 }
 
 export const LEVELS = [
