@@ -29,10 +29,9 @@ export const HUNDE_CHECK = 'terrasse-hunde-check-hinterlassenschaften-wegmachen'
 
 // [Raum, Aufgabe, Intervall in Tagen, Unbeliebtheit 1–5]
 const CATALOG = [
-  ['alltag', 'Spülmaschine ein-/ausräumen', 1, 1],
-  ['alltag', 'Arbeitsflächen abwischen', 1, 1],
-  ['alltag', 'Wäsche anstellen oder aufhängen', 2, 2],
-  ['alltag', '5-Minuten-Aufräumen im Wohnbereich', 1, 1],
+  ['alltag', '5 Minuten Küche', 1, 2],
+  ['alltag', '5 Minuten Wohnbereich', 1, 1],
+  ['alltag', 'Wäsche', 2, 2],
   ['alltag', 'Müll rausbringen', 3, 1],
 
   ['terrasse', 'Hunde-Check: Hinterlassenschaften wegmachen', 1, 2],
@@ -132,6 +131,21 @@ const CATALOG = [
     [room, 'Ausmisten', 180, 3],
   ]),
 ];
+
+// Was hinter den Grundroutine-Blöcken steckt (wird klein unter der Aufgabe angezeigt).
+export const TASK_HINTS = {
+  'alltag-5-minuten-kueche': 'Arbeitsfläche leer räumen und abwischen, Spülmaschine ein- oder ausräumen',
+  'alltag-5-minuten-wohnbereich': 'Herumliegende Sachen wegräumen, Kissen und Decken ordnen',
+  'alltag-waesche': 'Anstellen, aufhängen oder falten',
+};
+
+// Frühere Einzelaufgaben der Grundroutine – für ältere Einträge im Verlauf.
+export const RETIRED_TASKS = {
+  'alltag-spuelmaschine-ein-ausraeumen': 'Spülmaschine ein-/ausräumen',
+  'alltag-arbeitsflaechen-abwischen': 'Arbeitsflächen abwischen',
+  'alltag-waesche-anstellen-oder-aufhaengen': 'Wäsche anstellen oder aufhängen',
+  'alltag-5-minuten-aufraeumen-im-wohnbereich': '5-Minuten-Aufräumen im Wohnbereich',
+};
 
 export function slug(text) {
   return text

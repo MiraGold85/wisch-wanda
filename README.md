@@ -7,7 +7,7 @@ jede Woche ein Raum gründlich – mit Punkten, Serien und einem gemeinsamen Fam
 
 | Block | Dauer | Inhalt |
 |---|---|---|
-| ☀️ Grundroutine | ca. 10 Min | Spülmaschine, Arbeitsflächen, Wäsche, kurz aufräumen |
+| ☀️ Grundroutine | ca. 10 Min | 5 Minuten Küche, 5 Minuten Wohnbereich, Wäsche, Müll |
 | 🐾 Terrasse & Hunde | 2 Min | täglicher Hunde-Check plus fällige Terrassenaufgaben |
 | ⏱️ Raum-Runde | 4 × 7 Min | 4 Räume mit Timer, rotiert täglich |
 | 🔍 Fokus der Woche | 15–20 Min | jede Woche ein anderer Raum gründlich |

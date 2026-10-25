@@ -1,6 +1,6 @@
 // Datenhaltung: alles liegt lokal auf dem Gerät. Ist die Familie verbunden,
 // wird jede Änderung zusätzlich als „Op“ an den Sync weitergereicht.
-import { ROOMS, POINTS, DEFAULT_PRIVATE, defaultTasks, buildPlan, dateKey, addDays, dayNum, spreadLastDone } from './planner.js';
+import { ROOMS, POINTS, DEFAULT_PRIVATE, RETIRED_TASKS, defaultTasks, buildPlan, dateKey, addDays, dayNum, spreadLastDone } from './planner.js';
 import { WASTE_POINTS, wasteDone } from './waste.js';
 import { MILESTONES, milestoneTitle, personalStreak, isClaim } from './rewards.js';
 
@@ -55,6 +55,8 @@ export function migrate(state) {
   state.pausedRooms ??= {};
   // Vor Einführung der Markierung geladene Kalender sicherheitshalber als „noch hochzuladen“ behandeln.
   if (state.waste && state.sync && state.wasteUnsynced === undefined) state.wasteUnsynced = true;
+  // Ohne Familie gleich umstellen; verbundene Familien stellen die Eltern nach dem Laden um.
+  if (!state.sync) upgradeAlltag(state);
   return state;
 }
 
@@ -165,6 +167,26 @@ export function effectiveTasks(state) {
     const l = latest[t.id];
     return l && (!t.lastDone || l > t.lastDone) ? { ...t, lastDone: l } : t;
   });
+}
+
+// Grundroutine von den früheren Einzelaufgaben auf die Blöcke („5 Minuten Küche“ …) umstellen.
+// Gibt true zurück, wenn etwas geändert wurde.
+export function upgradeAlltag(state, key = dateKey()) {
+  const old = state.tasks.filter((t) => RETIRED_TASKS[t.id]).map((t) => t.id);
+  if (!old.length) return false;
+  state.tasks = state.tasks.filter((t) => !RETIRED_TASKS[t.id]);
+  const added = defaultTasks(key)
+    .filter((t) => t.room === 'alltag' && !state.tasks.some((x) => x.id === t.id))
+    .map((t) => ({ ...t, lastDone: addDays(key, -t.interval) })); // heute fällig
+  state.tasks.push(...added);
+  const ops = [...old.map((id) => ({ kind: 'task', op: 'delete', value: id })), ...added.map((t) => ({ kind: 'task', op: 'upsert', value: t }))];
+  const plan = state.plans[key];
+  if (plan) {
+    plan.alltag = buildPlan(effectiveTasks(state), key, excludedRooms(state)).alltag;
+    ops.push({ kind: 'plan', op: 'upsert', value: plan });
+  }
+  push(state, ops);
+  return true;
 }
 
 // Plan des Tages holen oder einmalig erzeugen.

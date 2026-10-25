@@ -120,3 +120,23 @@ test('Raum pausieren: raus aus der Planung, beim Aktivieren frischer Start', asy
   const overdue = effectiveTasks(state).filter((t) => t.room === 'kind2' && dueRatio(t, dateKey()) > 1);
   assert.equal(overdue.length, 0, 'nach dem Aktivieren ist nichts überfällig');
 });
+
+test('Grundroutine: alte Einzelaufgaben werden zu Blöcken', async () => {
+  const { upgradeAlltag, planFor } = await import('../js/store.js');
+  const { state, ops } = setup({ synced: true });
+  state.tasks = state.tasks.filter((t) => t.room !== 'alltag');
+  state.tasks.push(
+    { id: 'alltag-arbeitsflaechen-abwischen', room: 'alltag', name: 'Arbeitsflächen abwischen', interval: 1, effort: 1, lastDone: null },
+    { id: 'alltag-muell-rausbringen', room: 'alltag', name: 'Müll rausbringen', interval: 3, effort: 1, lastDone: '2026-10-18' },
+  );
+  planFor(state, TODAY);
+  ops.length = 0;
+  assert.equal(upgradeAlltag(state, TODAY), true);
+  const ids = state.tasks.filter((t) => t.room === 'alltag').map((t) => t.id).sort();
+  assert.deepEqual(ids, ['alltag-5-minuten-kueche', 'alltag-5-minuten-wohnbereich', 'alltag-muell-rausbringen', 'alltag-waesche']);
+  assert.equal(state.tasks.find((t) => t.id === 'alltag-muell-rausbringen').lastDone, '2026-10-18', 'Müll bleibt wie er war');
+  assert.ok(state.plans[TODAY].alltag.includes('alltag-5-minuten-kueche'), 'heutiger Plan zeigt schon die Blöcke');
+  assert.ok(!state.plans[TODAY].alltag.includes('alltag-arbeitsflaechen-abwischen'));
+  assert.deepEqual([...new Set(ops.map((o) => `${o.kind}:${o.op}`))], ['task:delete', 'task:upsert', 'plan:upsert']);
+  assert.equal(upgradeAlltag(state, TODAY), false, 'nur einmal');
+});

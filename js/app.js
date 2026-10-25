@@ -1,6 +1,6 @@
 import {
   ROOMS, EFFORT_LABELS, POINTS, HUNDE_CHECK, dateKey, addDays, dueRatio, daysUntilDue, pointsFor,
-  roomStatus, quickPlan, planTaskIds, computeStreak, levelFor, slug, MAX_JOKERS, privateTasks,
+  roomStatus, quickPlan, planTaskIds, computeStreak, levelFor, slug, MAX_JOKERS, privateTasks, TASK_HINTS, RETIRED_TASKS,
 } from './planner.js';
 import {
   load, save, freshState, migrate, roomName, roomEmoji, planFor, doneEntry, toggleTask, memberPoints, familyPoints,
@@ -8,7 +8,7 @@ import {
   saveMember, removeMember, saveTask, removeTask, saveSettings, setWaste, toggleWaste,
   syncStreakBonus, toggleClaim, claimOf, cleanupClaims, setAssignmentPhoto,
   isPrivateRoom, roomOwners, privateRooms, ownedRooms, unassignedPrivateRooms, toggleRoomOwner,
-  isPaused, excludedRooms, setRoomPaused,
+  isPaused, excludedRooms, setRoomPaused, upgradeAlltag,
 } from './store.js';
 import { personalStreak, nextMilestone, badgesFor, isClaim } from './rewards.js';
 import { importWaste, importFromSchichtplaner, wasteDue, wasteDone, nextPickups, wasteIcon, WASTE_POINTS } from './waste.js';
@@ -297,6 +297,7 @@ function taskRow(id, opts = {}) {
   if (opts.showRoom) sub.push(`${roomEmoji(t.room)} ${esc(roomName(state, t.room))}`);
   if (done) sub.push(`erledigt von ${who(done.member)}`);
   else if (opts.due) sub.push(dueText(opts.due));
+  else if (TASK_HINTS[id]) sub.push(esc(TASK_HINTS[id]));
   if (claim) sub.push(claimText(claim));
   const row = `
     <button class="task ${done ? 'done' : ''} ${claim && claim.to !== me().id ? 'locked' : ''} effort-${t.effort}" data-task="${esc(id)}">
@@ -769,7 +770,7 @@ function viewFamily() {
     const t = task(h.taskId);
     const m = member(h.member);
     const when = h.date === key ? 'heute' : h.date === addDays(key, -1) ? 'gestern' : shortDate(h.date);
-    return `<li><span>${m?.emoji ?? '❔'}</span><span>${esc(t?.name ?? h.title ?? 'Aufgabe')} <small>${t ? esc(roomName(state, t.room)) + ' · ' : ''}${when}</small></span><b>+${h.points}</b></li>`;
+    return `<li><span>${m?.emoji ?? '❔'}</span><span>${esc(t?.name ?? h.title ?? RETIRED_TASKS[h.taskId] ?? 'Aufgabe')} <small>${t ? esc(roomName(state, t.room)) + ' · ' : ''}${when}</small></span><b>+${h.points}</b></li>`;
   });
 
   // Offene Zuschickungen plus die der letzten drei Tage
@@ -1360,7 +1361,10 @@ document.addEventListener('focusout', () => setTimeout(() => {
 let remoteTimer = null;
 function onSyncChange(ev) {
   if (ev.type === 'remote') notifyRemote(ev);
-  if (ev.type === 'reload') cleanupClaims(state, today());
+  if (ev.type === 'reload') {
+    cleanupClaims(state, today());
+    if (canManage()) upgradeAlltag(state, today());
+  }
   if (ev.type === 'need-pick') renderOverlay();
   if (ev.type === 'rejected' && ev.kind === 'completion') {
     toast('✋ Das ging nicht – die Aufgabe hat jemand anderes übernommen oder erledigt.', 4000);
