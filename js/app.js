@@ -1429,6 +1429,48 @@ function clearJoinHash() {
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
 }
 
+// ---------- Zurück-Knopf (Android) ----------
+// Ein zusätzlicher Verlaufs-Eintrag fängt „Zurück“ ab: erst Fenster schließen, dann zur Startseite,
+// auf der Startseite zweimal kurz hintereinander = App beenden.
+
+function armBack() {
+  if (!history.state?.wanda) history.pushState({ wanda: true }, '');
+}
+
+function goBack() {
+  if (timer) {
+    if (confirm('Runde beenden?')) stopTimer();
+    return true;
+  }
+  if (sheet && sheet.type !== 'join') {
+    closeSheet();
+    return true;
+  }
+  if (!$overlay.hidden) return false; // Einrichtung/„Wer bist du?“ – da gibt es kein Zurück
+  if (openRoom) {
+    openRoom = null;
+    render();
+    return true;
+  }
+  if (tab !== 'heute') {
+    tab = 'heute';
+    render();
+    window.scrollTo(0, 0);
+    return true;
+  }
+  return false;
+}
+
+window.addEventListener('popstate', () => {
+  clearTimeout(armBack.t);
+  if (goBack()) return armBack();
+  // Startseite: kein neuer Eintrag – das nächste „Zurück“ verlässt die App
+  toast('Nochmal „Zurück“ zum Beenden', 2000);
+  armBack.t = setTimeout(armBack, 2000);
+});
+// Chrome merkt sich den Eintrag nur nach einer Berührung zuverlässig
+document.addEventListener('pointerdown', armBack, { passive: true });
+
 // ---------- Ereignisse ----------
 
 document.addEventListener('click', (ev) => {
@@ -1949,3 +1991,4 @@ sync.start({
 
 renderOverlay();
 render();
+armBack();
