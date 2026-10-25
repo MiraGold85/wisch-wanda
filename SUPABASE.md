@@ -123,6 +123,17 @@ Voraussetzung: Die Eltern-Rechte (004) sind schon eingerichtet. Danach gilt, vom
 - Hat jemand eine Aufgabe übernommen, kann nur diese Person sie an dem Tag abhaken.
 - Einen Haken wegnehmen kann nur, wer die Aufgabe erledigt hat – oder Eltern.
 
+## Beweisfotos bestätigen (ca. 3 Minuten)
+
+Damit Eltern ein verlangtes Foto mit „👍 Passt“ bestätigen oder mit „↩️ Nochmal“ zurückschicken können:
+
+1. Die Datei [`supabase/007_bestaetigen.sql`](supabase/007_bestaetigen.sql) öffnen → **„Copy raw file“**
+   (oder direkt: https://raw.githubusercontent.com/MiraGold85/wisch-wanda/main/supabase/007_bestaetigen.sql).
+2. Im Supabase **SQL Editor** eine neue Abfrage öffnen, einfügen, **„Run“** (Nachfrage bestätigen).
+3. Für die passenden Benachrichtigungen („📷 Foto ist da“, „↩️ Nochmal bitte“, „👍 Passt“) den Push-Dienst
+   aktualisieren: **Edge Functions → wanda-push → Code**, den Inhalt von
+   [`supabase/functions/wanda-push/index.ts`](supabase/functions/wanda-push/index.ts) komplett ersetzen → **„Deploy“**.
+
 ## Gut zu wissen
 
 - Kostenlose Supabase-Projekte schlafen ein, wenn eine Woche lang niemand die App benutzt.

@@ -140,3 +140,29 @@ test('Grundroutine: alte Einzelaufgaben werden zu Blöcken', async () => {
   assert.deepEqual([...new Set(ops.map((o) => `${o.kind}:${o.op}`))], ['task:delete', 'task:upsert', 'plan:upsert']);
   assert.equal(upgradeAlltag(state, TODAY), false, 'nur einmal');
 });
+
+test('Beweisfoto: erst nach „Passt“ gibt es Punkte, „Nochmal“ schickt zurück', async () => {
+  const { setAssignmentPhoto, awaitingReview, approveAssignment, rejectAssignment, photoDate } = await import('../js/store.js');
+  const { state } = setup();
+  const a = addAssignment(state, { to: 'lena', from: 'mama', title: 'Küche', points: 20, photo: true, note: 'bis abends' });
+  const ts = new Date(2026, 9, 18, 20).getTime();
+  setAssignmentPhoto(state, a.id, `h1/${a.id}-${ts}.jpg`);
+  assert.ok(awaitingReview(a));
+  assert.equal(photoDate(a), '2026-10-18');
+  assert.equal(memberPoints(state, 'lena'), 0);
+  const old = rejectAssignment(state, a.id, 'Spüle ist noch voll');
+  assert.equal(old, `h1/${a.id}-${ts}.jpg`);
+  assert.equal(a.photoPath, null);
+  assert.equal(a.note, 'bis abends ↩️ Spüle ist noch voll');
+  assert.ok(!awaitingReview(a));
+  setAssignmentPhoto(state, a.id, `h1/${a.id}-${ts}.jpg`);
+  rejectAssignment(state, a.id, '');
+  assert.equal(a.note, 'bis abends ↩️ Nochmal bitte', 'alter Grund wird ersetzt');
+  setAssignmentPhoto(state, a.id, `h1/${a.id}-${ts}.jpg`);
+  const entry = approveAssignment(state, a.id, TODAY);
+  assert.equal(entry.member, 'lena');
+  assert.equal(entry.date, '2026-10-18', 'zählt für den Tag des Fotos');
+  assert.equal(memberPoints(state, 'lena'), 20);
+  assert.equal(a.doneBy, 'lena');
+  assert.equal(approveAssignment(state, a.id, TODAY), null, 'nur einmal');
+});

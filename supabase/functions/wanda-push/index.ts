@@ -137,6 +137,31 @@ async function onAssignment(type: string, householdId: string, id: string) {
       tag: `assignment-${a.id}`,
     });
   }
+  // Beweisfoto: angekommen → Absender bestätigt; zurückgewiesen bzw. bestätigt → Empfängerin
+  if (type === 'update' && a.photo && !a.done_at && a.photo_path && a.from_member && a.from_member !== a.to_member) {
+    const subs = await subsFor(householdId, [a.from_member]);
+    return send(subs, {
+      title: `📷 ${names[a.to_member] ?? 'Jemand'} hat ein Foto geschickt`,
+      body: `„${title}“ – passt das so?`,
+      tag: `assignment-${a.id}`,
+    });
+  }
+  if (type === 'update' && a.photo && !a.done_at && !a.photo_path && a.note?.includes('↩️')) {
+    const subs = await subsFor(householdId, [a.to_member]);
+    return send(subs, {
+      title: `↩️ Nochmal bitte: ${title}`,
+      body: a.note.slice(a.note.indexOf('↩️') + 2).trim(),
+      tag: `assignment-${a.id}`,
+    });
+  }
+  if (type === 'update' && a.photo && a.done_at && a.photo_path && a.from_member !== a.to_member) {
+    const subs = await subsFor(householdId, [a.to_member]);
+    return send(subs, {
+      title: `👍 ${names[a.from_member] ?? 'Jemand'} sagt: passt!`,
+      body: `„${title}“ (+${a.points})`,
+      tag: `assignment-${a.id}`,
+    });
+  }
   if (type === 'update' && a.done_at && a.from_member && a.done_by !== a.from_member) {
     const subs = await subsFor(householdId, [a.from_member]);
     return send(subs, {

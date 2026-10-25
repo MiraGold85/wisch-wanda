@@ -440,3 +440,5 @@ input[type="number"] { width: 72px; }
 .paused-note { color: var(--muted); margin-left: 6px; }
 .task.locked .check { border-style: dashed; opacity: .5; }
 .task.locked { background: color-mix(in srgb, var(--brand-soft) 50%, var(--card)); }
+.review-btns { justify-content: center; gap: 10px; margin-top: 12px; }
+.review-btns .btn { flex: 1; }

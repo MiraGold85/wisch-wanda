@@ -288,6 +288,37 @@ function reopen(state, a) {
   push(state, [{ kind: 'assignment', op: 'upsert', value: a }]);
 }
 
+// ---------- Beweisfotos bestätigen ----------
+
+// Foto verlangt und geschickt, aber noch nicht bestätigt?
+export const awaitingReview = (a) => !!(a?.photo && a.photoPath && !a.doneAt);
+
+// Tag, an dem das Foto gemacht wurde (steckt im Dateinamen) – dafür gibt es die Erledigung.
+export function photoDate(a) {
+  const m = a.photoPath?.match(/-(\d{12,})\.jpg$/);
+  return m ? dateKey(new Date(Number(m[1]))) : null;
+}
+
+// „Passt“: Erledigung für die Empfängerin am Tag des Fotos.
+export function approveAssignment(state, id, key) {
+  const a = state.assignments.find((x) => x.id === id);
+  if (!awaitingReview(a)) return null;
+  const date = photoDate(a);
+  return toggleAssignment(state, id, date && date <= key ? date : key, a.to);
+}
+
+// „Nochmal“: Foto zurückweisen, Grund steht danach bei der Aufgabe. Gibt den alten Foto-Pfad zurück.
+export function rejectAssignment(state, id, reason) {
+  const a = state.assignments.find((x) => x.id === id);
+  if (!awaitingReview(a)) return null;
+  const old = a.photoPath;
+  const base = (a.note || '').replace(/\s*↩️.*$/s, '');
+  a.photoPath = null;
+  a.note = [base, `↩️ ${reason || 'Nochmal bitte'}`].filter(Boolean).join(' ');
+  push(state, [{ kind: 'assignment', op: 'upsert', value: a }]);
+  return old;
+}
+
 // Zugeschickte Aufgabe abhaken/rückgängig. Gibt den neuen Eintrag zurück (oder null).
 export function toggleAssignment(state, id, key, memberId) {
   const a = state.assignments.find((x) => x.id === id);

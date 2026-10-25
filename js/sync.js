@@ -41,7 +41,7 @@ const SPECS = {
       to_member: a.to, from_member: a.from ?? null, due_date: a.due || null, note: a.note || null,
       created_at: a.createdAt, done_at: a.doneAt || null, done_by: a.doneBy || null, completion_id: a.completionId || null,
       // Fotos gibt es erst mit 005_fotos.sql – nur mitschicken, wenn benutzt.
-      ...(a.photo ? { photo: true } : {}), ...(a.photoPath ? { photo_path: a.photoPath } : {}),
+      ...(a.photo ? { photo: true } : {}), ...('photoPath' in a ? { photo_path: a.photoPath } : {}),
     }),
     fromRow: (r) => ({
       id: r.id, taskId: r.task_id, title: r.title, points: r.points, to: r.to_member, from: r.from_member,
@@ -169,8 +169,13 @@ export async function flush() {
       if (error) {
         // z. B. dieselbe Aufgabe hat am selben Tag schon jemand anderes erledigt
         console.warn('Wisch-Wanda: Änderung verworfen', op, error);
-        ctx.onChange({ type: 'rejected', kind: op.kind, error });
+        ctx.onChange({ type: 'rejected', kind: op.kind, error, value: op.value });
         needReload = true;
+        // Ohne Erledigung auch die Zuschickung nicht als erledigt speichern.
+        if (op.kind === 'completion') {
+          const ids = new Set([op.value].flat().map((h) => h.id));
+          st().outbox = st().outbox.filter((o, i) => i === 0 || !(o.kind === 'assignment' && ids.has(o.value?.completionId)));
+        }
       } else if (op.kind === 'waste') {
         st().wasteUnsynced = false;
       } else if (op.kind === 'plan' && op.op === 'insertIgnore') {
@@ -577,6 +582,12 @@ export async function uploadPhoto(blob, assignmentId) {
   const { error } = await c.storage.from(PHOTO_BUCKET).upload(path, blob, { contentType: 'image/jpeg' });
   if (error) throw Object.assign(new Error(error.message || 'Hochladen fehlgeschlagen'), { network: /fetch|network/i.test(error.message || '') });
   return path;
+}
+
+export async function deletePhoto(path) {
+  await ensureSession();
+  const c = await getClient();
+  await c.storage.from(PHOTO_BUCKET).remove([path]);
 }
 
 export async function photoUrl(path) {

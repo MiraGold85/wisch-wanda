@@ -9,6 +9,7 @@ import {
   syncStreakBonus, toggleClaim, claimOf, cleanupClaims, setAssignmentPhoto,
   isPrivateRoom, roomOwners, privateRooms, ownedRooms, unassignedPrivateRooms, toggleRoomOwner,
   isPaused, excludedRooms, setRoomPaused, upgradeAlltag,
+  awaitingReview, approveAssignment, rejectAssignment,
 } from './store.js';
 import { personalStreak, nextMilestone, badgesFor, isClaim } from './rewards.js';
 import { importWaste, importFromSchichtplaner, wasteDue, wasteDone, nextPickups, wasteIcon, WASTE_POINTS } from './waste.js';
@@ -16,7 +17,7 @@ import * as sync from './sync.js';
 import { pushSupport, enablePush, updatePush, disablePush, testPush } from './push.js';
 
 // Bei jeder Veröffentlichung zusammen mit CACHE in sw.js erhöhen.
-const APP_VERSION = 24;
+const APP_VERSION = 25;
 
 let state = load();
 let tab = 'heute';
@@ -45,6 +46,9 @@ const isQuick = () => !!state.quickDays[today()];
 const rightsOn = () => !!(state.sync && state.rightsEnabled);
 const hasParents = () => state.members.some((m) => m.role === 'parent');
 const isParent = () => member(state.currentMember)?.role === 'parent';
+// Wer bestätigt ein Beweisfoto? Mit Eltern-Rechten die Eltern, sonst wer die Aufgabe geschickt hat.
+const canReview = (a) => awaitingReview(a) && a.to !== me().id
+  && (rightsOn() && hasParents() ? isParent() : a.from === me().id);
 const canManage = () => !rightsOn() || !hasParents() || isParent();
 const pick = (list) => list[Math.floor(Math.random() * list.length)];
 const formatCode = (c) => (c ? `${c.slice(0, 4)}-${c.slice(4)}` : '');
@@ -208,6 +212,10 @@ function completeAssignment(id, ev) {
   const a = state.assignments.find((x) => x.id === id);
   if (!a) return;
   if (a.doneAt && !mayUndo({ member: a.doneBy }, assignmentTitle(state, a))) return;
+  if (awaitingReview(a)) {
+    if (canReview(a)) return openPhoto(a);
+    return toast(a.to === me().id ? '⏳ Dein Foto wartet noch auf Bestätigung.' : '⏳ Das Foto wartet noch auf Bestätigung.');
+  }
   if (a.photo && !a.doneAt && !a.photoPath && state.photosEnabled) {
     toast('📷 Hier ist ein Foto als Beweis gewünscht – mach eins!');
     return takePhoto(id);
@@ -248,13 +256,39 @@ async function handlePhoto(file) {
   try {
     const path = await sync.uploadPhoto(await shrinkPhoto(file), id);
     setAssignmentPhoto(state, id, path);
-    if (!a.doneAt) completeAssignment(id);
+    if (a.photo && !a.doneAt) toast('📷 Foto geschickt – sobald es bestätigt ist, gibt es die Punkte.', 4000);
+    else if (!a.doneAt) completeAssignment(id);
     else toast('📷 Foto nachgereicht ✓');
   } catch (e) {
     toast(e.network || !navigator.onLine
       ? 'Ohne Internet kann kein Foto hochgeladen werden – bitte später noch mal.'
       : `Das Foto konnte nicht hochgeladen werden: ${e.message}`, 5000);
   }
+  render();
+}
+
+function openPhoto(a) {
+  if (!a?.photoPath) return;
+  openSheet({ type: 'photo', id: a.id });
+  sync.photoUrl(a.photoPath)
+    .then((url) => { if (sheet?.id === a.id) { sheet.url = url; renderOverlay(); } })
+    .catch((e) => { if (sheet?.id === a.id) { sheet.error = `Foto konnte nicht geladen werden: ${e.message}`; renderOverlay(); } });
+}
+
+function reviewPhoto(id, ok) {
+  const a = state.assignments.find((x) => x.id === id);
+  if (!a || !canReview(a)) return closeSheet();
+  if (ok) {
+    approveAssignment(state, id, today());
+    toast(`👍 Bestätigt – ${who(a.to)} bekommt +${assignmentPoints(state, a)} Punkte.`);
+  } else {
+    const reason = prompt(`Was fehlt noch? ${who(a.to)} sieht das bei der Aufgabe.`, '');
+    if (reason === null) return;
+    const old = rejectAssignment(state, id, reason.trim());
+    if (old) sync.deletePhoto(old).catch(() => {});
+    toast(`↩️ ${who(a.to)} soll nochmal ran.`);
+  }
+  closeSheet();
   render();
 }
 
@@ -266,7 +300,14 @@ function renderPhotoSheet() {
       <h2>📷 ${esc(a ? assignmentTitle(state, a) : 'Foto')}</h2>
       <p class="hint">${a?.doneBy ? `erledigt von ${who(a.doneBy)}` : ''}${a?.doneAt ? ` · ${shortDate(a.doneAt)}` : ''}</p>
       ${sheet.url ? `<img class="proof" src="${esc(sheet.url)}" alt="Beweisfoto">` : `<p>${sheet.error ? esc(sheet.error) : 'Foto wird geladen …'}</p>`}
-      <button class="btn big" data-action="close-sheet">Schließen</button>
+      ${a && canReview(a) ? `
+        <p class="hint">Passt das so? Erst mit deinem OK bekommt ${who(a.to)} die Punkte.</p>
+        <div class="row review-btns">
+          <button class="btn" data-action="approve" data-id="${esc(a.id)}">👍 Passt (+${assignmentPoints(state, a)})</button>
+          <button class="btn ghost" data-action="reject" data-id="${esc(a.id)}">↩️ Nochmal</button>
+        </div>` : `
+        ${awaitingReview(a) ? '<p class="hint">⏳ wartet auf Bestätigung</p>' : ''}
+        <button class="btn big" data-action="close-sheet">Schließen</button>`}
     </div>`;
 }
 
@@ -351,7 +392,8 @@ function assignRow(a, opts = {}) {
   if (a.doneAt) sub.push(`✓ erledigt${a.doneBy && a.doneBy !== a.to ? ` von ${who(a.doneBy)}` : ''}`);
   else if (a.due) sub.push(deadline(a.due));
   if (a.note) sub.push(`„${esc(a.note)}“`);
-  if (a.photoPath) sub.push('📷 mit Foto');
+  if (awaitingReview(a)) sub.push(canReview(a) ? '<span class="late">📷 Foto ansehen & bestätigen</span>' : '<span class="late">⏳ Foto wartet auf Bestätigung</span>');
+  else if (a.photoPath) sub.push('📷 mit Foto');
   else if (a.photo && !a.doneAt) sub.push('<span class="late">📷 Foto als Beweis</span>');
   const t = task(a.taskId);
   // In der Übersicht nur anzeigen – abhaken kann die Person selbst unter „Für dich“.
@@ -564,6 +606,21 @@ function viewToday() {
       body: `${shown.map((t) => taskRow(t.id, { claim: true, showRoom: true, due: t })).join('')}
         ${due.length > shown.length ? `<button class="btn ghost" data-action="show-all-due">Alle ${due.length} anzeigen</button>` : ''}`,
     });
+  }
+  const reviews = state.assignments.filter(canReview);
+  if (reviews.length) {
+    cards.push(section({
+      icon: '📷', title: 'Zu bestätigen', meta: 'Beweisfotos – erst mit deinem OK gibt es die Punkte', cls: 'review',
+      body: reviews.map((a) => `
+        <button class="task assigned" data-view-photo="${esc(a.id)}">
+          <span class="check" aria-hidden="true">🖼️</span>
+          <span class="task-body">
+            <span class="task-name">${esc(assignmentTitle(state, a))}</span>
+            <span class="task-sub">von ${who(a.to)}${a.note ? ` · „${esc(a.note)}“` : ''}</span>
+          </span>
+          <span class="pts">+${assignmentPoints(state, a)}</span>
+        </button>`).join(''),
+    }));
   }
   if (mine.length) {
     cards.push(section({
@@ -1370,7 +1427,10 @@ function onSyncChange(ev) {
   }
   if (ev.type === 'need-pick') renderOverlay();
   if (ev.type === 'rejected' && ev.kind === 'completion') {
-    toast('✋ Das ging nicht – die Aufgabe hat jemand anderes übernommen oder erledigt.', 4000);
+    const forOther = [ev.value].flat().some((h) => h?.member && h.member !== me().id);
+    toast(forOther
+      ? '📷 Bestätigen braucht noch den Datenbank-Nachtrag 007 (siehe SUPABASE.md).'
+      : '✋ Das ging nicht – die Aufgabe hat jemand anderes übernommen oder erledigt.', 6000);
   }
   if (ev.type === 'rejected' && ev.kind === 'waste') {
     toast('🗑️ Der Abfallkalender ist erst auf diesem Handy. Für die ganze Familie bitte den Datenbank-Nachtrag aus SUPABASE.md ausführen.', 7000);
@@ -1557,15 +1617,7 @@ document.addEventListener('click', (ev) => {
     return pickMember(d.pick);
   }
   if (d.photo) return takePhoto(d.photo);
-  if (d.viewPhoto) {
-    const a = state.assignments.find((x) => x.id === d.viewPhoto);
-    if (!a?.photoPath) return;
-    openSheet({ type: 'photo', id: a.id });
-    sync.photoUrl(a.photoPath)
-      .then((url) => { if (sheet?.id === a.id) { sheet.url = url; renderOverlay(); } })
-      .catch((e) => { if (sheet?.id === a.id) { sheet.error = `Foto konnte nicht geladen werden: ${e.message}`; renderOverlay(); } });
-    return;
-  }
+  if (d.viewPhoto) return openPhoto(state.assignments.find((x) => x.id === d.viewPhoto));
   if (d.parentPick) {
     parentPick = parentPick.includes(d.parentPick) ? parentPick.filter((x) => x !== d.parentPick) : [...parentPick, d.parentPick];
     return render();
@@ -1621,6 +1673,10 @@ document.addEventListener('click', (ev) => {
       return startTimer(0);
     case 'next-room':
       return startTimer(timer.index + 1);
+    case 'approve':
+      return reviewPhoto(d.id, true);
+    case 'reject':
+      return reviewPhoto(d.id, false);
     case 'joker-info': {
       const n = Number(d.next);
       return toast(`🃏 Ein Joker rettet deine Serie, wenn du einen Tag gar nichts abhakst. Alle 7 Tage am Stück gibt es einen (höchstens ${MAX_JOKERS}).${n ? ` Nächster Joker: noch ${n} ${n === 1 ? 'Tag' : 'Tage'}.` : ''}`, 6000);
