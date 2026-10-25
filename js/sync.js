@@ -132,6 +132,12 @@ async function run(op) {
   const spec = SPECS[op.kind];
   const key = spec.key || 'id';
   if (op.op === 'delete') return c.from(spec.table).delete().eq('household_id', hid()).eq(key, op.value);
+  // Eine Zuschickung von jemand anderem nur ändern (erledigen, Foto), nicht „upserten“:
+  // Beim Upsert prüft der Server auch die Regel fürs Zuschicken – das dürfen Kinder nur als sie selbst.
+  if (op.kind === 'assignment' && !Array.isArray(op.value) && op.value.from && op.value.from !== st().currentMember) {
+    const { id, ...row } = spec.toRow(op.value);
+    return c.from(spec.table).update(row).eq('household_id', hid()).eq('id', id);
+  }
   return c.from(spec.table).upsert(rows(op), {
     onConflict: `household_id,${key}`,
     ignoreDuplicates: op.op === 'insertIgnore',

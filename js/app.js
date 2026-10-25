@@ -16,7 +16,7 @@ import * as sync from './sync.js';
 import { pushSupport, enablePush, updatePush, disablePush, testPush } from './push.js';
 
 // Bei jeder Veröffentlichung zusammen mit CACHE in sw.js erhöhen.
-const APP_VERSION = 23;
+const APP_VERSION = 24;
 
 let state = load();
 let tab = 'heute';
