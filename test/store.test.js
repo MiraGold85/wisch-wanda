@@ -166,3 +166,27 @@ test('Beweisfoto: erst nach „Passt“ gibt es Punkte, „Nochmal“ schickt zu
   assert.equal(a.doneBy, 'lena');
   assert.equal(approveAssignment(state, a.id, TODAY), null, 'nur einmal');
 });
+
+test('Zusammen erledigt: Punkte werden aufgeteilt, Rückgängig nimmt alles mit', async () => {
+  const { shareEntry, sharesOf } = await import('../js/store.js');
+  const { state, ops } = setup({ synced: true });
+  state.members.push({ id: 'papa', name: 'Papa', emoji: '👨' });
+  const entry = toggleTask(state, OVEN, TODAY, 'mama', 50);
+  ops.length = 0;
+  const shares = shareEntry(state, entry, ['papa', 'mama'], 'Backofen reinigen');
+  assert.equal(shares.length, 1);
+  assert.equal(memberPoints(state, 'mama'), 25);
+  assert.equal(memberPoints(state, 'papa'), 25);
+  assert.equal(shares[0].title, '👥 Backofen reinigen');
+  assert.equal(shares[0].taskId, null, 'kein zweiter Eintrag für dieselbe Aufgabe am selben Tag');
+  assert.deepEqual(ops.map((o) => `${o.kind}:${o.op}`), ['completion:upsert', 'completion:upsert']);
+  assert.deepEqual(shareEntry(state, entry, ['lena'], 'x'), [], 'nur einmal teilen');
+  // drei Leute, ungerade
+  const e2 = toggleTask(state, 'kueche-herd-reinigen', TODAY, 'mama', 10);
+  shareEntry(state, e2, ['papa', 'lena'], 'Herd');
+  assert.deepEqual([e2, ...sharesOf(state, e2)].map((h) => h.points), [4, 3, 3]);
+  // rückgängig
+  toggleTask(state, OVEN, TODAY, 'mama', 50);
+  assert.equal(memberPoints(state, 'papa'), 3);
+  assert.ok(!state.history.some((h) => h.id.startsWith(`${entry.id}~`)));
+});

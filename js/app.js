@@ -9,15 +9,15 @@ import {
   syncStreakBonus, toggleClaim, claimOf, cleanupClaims, setAssignmentPhoto,
   isPrivateRoom, roomOwners, privateRooms, ownedRooms, unassignedPrivateRooms, toggleRoomOwner,
   isPaused, excludedRooms, setRoomPaused, upgradeAlltag,
-  awaitingReview, approveAssignment, rejectAssignment,
+  awaitingReview, approveAssignment, rejectAssignment, shareEntry, sharesOf, isShare,
 } from './store.js';
-import { personalStreak, nextMilestone, badgesFor, isClaim } from './rewards.js';
+import { personalStreak, nextMilestone, badgesFor, isClaim, isBonus } from './rewards.js';
 import { importWaste, importFromSchichtplaner, wasteDue, wasteDone, nextPickups, wasteIcon, WASTE_POINTS } from './waste.js';
 import * as sync from './sync.js';
 import { pushSupport, enablePush, updatePush, disablePush, testPush } from './push.js';
 
 // Bei jeder Veröffentlichung zusammen mit CACHE in sw.js erhöhen.
-const APP_VERSION = 25;
+const APP_VERSION = 26;
 
 let state = load();
 let tab = 'heute';
@@ -156,10 +156,12 @@ function rewardCheck(before) {
   }
 }
 
-function celebrate(entry, big, ev) {
-  const rect = ev?.target?.closest('[data-task],[data-assign]')?.getBoundingClientRect();
+function celebrate(entry, big, ev, shares = []) {
+  const rect = ev?.target?.closest('[data-task],[data-assign],[data-waste]')?.getBoundingClientRect();
   if (rect) burst(rect.left + 28, rect.top + rect.height / 2, big);
-  toast(`+${entry.points} Punkte · ${big ? pick(BIG_CHEERS) : pick(CHEERS)}`);
+  toast(shares.length
+    ? `👥 +${entry.points} für dich · ${shares.map((h) => `+${h.points} für ${member(h.member)?.name ?? 'jemand'}`).join(' · ')}`
+    : `+${entry.points} Punkte · ${big ? pick(BIG_CHEERS) : pick(CHEERS)}`);
   navigator.vibrate?.(30);
   checkGoal();
 }
@@ -181,6 +183,48 @@ function claimedByOther(item) {
   return true;
 }
 
+// ---------- Zusammen geputzt ----------
+
+// Fremde Erledigungen eintragen dürfen nur Eltern (bzw. alle, solange es keine Eltern gibt).
+const canShare = () => state.members.length > 1 && !(rightsOn() && hasParents() && !isParent());
+// Mit wem putze ich heute zusammen? Gilt nur für heute und nur auf diesem Handy.
+const togetherWith = () => (canShare() && state.together?.date === today()
+  ? state.together.members.filter((id) => id !== me().id && member(id)) : []);
+
+// Heute schon allein abgehakt – kann nachträglich geteilt werden.
+const shareableToday = () => state.history.filter((h) => h.date === today() && h.member === me().id
+  && h.points > 1 && !isBonus(h) && !isShare(h) && !sharesOf(state, h).length);
+
+function entryTitle(h) {
+  return task(h.taskId)?.name ?? h.title ?? 'Aufgabe';
+}
+
+function toggleTogether(id) {
+  const list = togetherWith();
+  const on = !list.includes(id);
+  state.together = { date: today(), members: on ? [...list, id] : list.filter((x) => x !== id) };
+  save(state);
+  const open = shareableToday();
+  if (on && open.length && confirm(`Du hast heute schon ${open.length} ${open.length === 1 ? 'Aufgabe' : 'Aufgaben'} abgehakt. Auch mit ${member(id).name} teilen?`)) {
+    for (const h of open) shareEntry(state, h, [id], entryTitle(h));
+    toast(`👥 Punkte mit ${member(id).name} geteilt.`);
+  }
+  render();
+}
+
+function togetherCard() {
+  const list = togetherWith();
+  const names = list.map((id) => member(id).name).join(' & ');
+  return section({
+    icon: '👥', title: 'Zusammen geputzt?', cls: 'together',
+    meta: list.length
+      ? `Beim Abhaken werden die Punkte heute mit ${esc(names)} geteilt.`
+      : 'Wer hilft mit? Dann werden die Punkte beim Abhaken aufgeteilt.',
+    body: `<div class="owner-chips">${state.members.filter((m) => m.id !== me().id).map((m) => `
+      <button class="owner-chip ${list.includes(m.id) ? 'active' : ''}" data-together="${esc(m.id)}">${m.emoji} ${esc(m.name)}</button>`).join('')}</div>`,
+  });
+}
+
 function complete(taskId, ev) {
   const t = task(taskId);
   if (!t) return;
@@ -189,7 +233,8 @@ function complete(taskId, ev) {
   if (!done && claimedByOther({ taskId })) return;
   const before = earnedIds();
   const entry = toggleTask(state, taskId, today(), me().id, pointsFor(t));
-  if (entry) celebrate(entry, t.effort >= 4, ev);
+  const shares = shareEntry(state, entry, togetherWith(), t.name);
+  if (entry) celebrate(entry, t.effort >= 4, ev, shares);
   rewardCheck(before);
   render();
   if (timer) renderTimer();
@@ -203,7 +248,8 @@ function completeWaste(key, ev) {
   if (!done && claimedByOther({ title: `${e.t} rausstellen` })) return;
   const before = earnedIds();
   const entry = toggleWaste(state, e, today(), me().id);
-  if (entry) celebrate(entry, false, ev);
+  const shares = shareEntry(state, entry, togetherWith(), `${e.t} rausstellen`);
+  if (entry) celebrate(entry, false, ev, shares);
   rewardCheck(before);
   render();
 }
@@ -339,7 +385,7 @@ function taskRow(id, opts = {}) {
   const claim = opts.claim && !done && state.members.length > 1 ? claimOf(state, { taskId: id }, today()) : null;
   const sub = [];
   if (opts.showRoom) sub.push(`${roomEmoji(t.room)} ${esc(roomName(state, t.room))}`);
-  if (done) sub.push(`erledigt von ${who(done.member)}`);
+  if (done) sub.push(`erledigt von ${[done, ...sharesOf(state, done)].map((h) => who(h.member)).join(' & ')}`);
   else if (opts.due) sub.push(dueText(opts.due));
   else if (TASK_HINTS[id]) sub.push(esc(TASK_HINTS[id]));
   if (claim) sub.push(claimText(claim));
@@ -431,7 +477,7 @@ function wasteRow(e) {
   const sent = !done && state.assignments.find((a) => !a.taskId && !a.doneAt && a.title === e.title && !isClaim(a));
   const claim = !done && !sent ? claimOf(state, { title: e.title }, today()) : null;
   const sub = done
-    ? `erledigt von ${who(done.member)}`
+    ? `erledigt von ${[done, ...sharesOf(state, done)].map((h) => who(h.member)).join(" & ")}`
     : [e.today ? '<span class="late">heute ist Abholung – schnell noch raus!</span>' : 'morgen ist Abholung · heute Abend rausstellen',
       sent ? `📨 an ${who(sent.to)}` : '', claim ? claimText(claim) : ''].filter(Boolean).join(' · ');
   const row = `
@@ -664,6 +710,7 @@ function viewToday() {
       <span class="switch"></span>
       <span><b>Nur 15 Minuten heute</b><br><small>Für Tage mit wenig Energie – zählt trotzdem für die Serie.</small></span>
     </label>`);
+  if (canShare()) cards.push(togetherCard());
   if (plan.alltag.length) {
     cards.push(section({
       icon: '☀️', title: 'Grundroutine', meta: 'ca. 10 Minuten · das tägliche Fundament',
@@ -1558,7 +1605,7 @@ document.addEventListener('click', () => setTimeout(syncBack, 0));
 // ---------- Ereignisse ----------
 
 document.addEventListener('click', (ev) => {
-  const el = ev.target.closest('[data-task],[data-assign],[data-waste],[data-pause-room],[data-owner-room],[data-parent-pick],[data-photo],[data-view-photo],[data-member-code],[data-claim],[data-claim-waste],[data-send-waste],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
+  const el = ev.target.closest('[data-task],[data-assign],[data-waste],[data-together],[data-pause-room],[data-owner-room],[data-parent-pick],[data-photo],[data-view-photo],[data-member-code],[data-claim],[data-claim-waste],[data-send-waste],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
   if (!el || el.matches('input')) return;
   const d = el.dataset;
   if (d.task) return complete(d.task, ev);
@@ -1616,6 +1663,7 @@ document.addEventListener('click', (ev) => {
     }
     return pickMember(d.pick);
   }
+  if (d.together) return toggleTogether(d.together);
   if (d.photo) return takePhoto(d.photo);
   if (d.viewPhoto) return openPhoto(state.assignments.find((x) => x.id === d.viewPhoto));
   if (d.parentPick) {

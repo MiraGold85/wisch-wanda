@@ -228,8 +228,9 @@ export function toggleTask(state, taskId, key, memberId, points) {
 }
 
 function removeCompletion(state, entry) {
-  state.history = state.history.filter((h) => h !== entry);
-  const ops = [{ kind: 'completion', op: 'delete', value: entry.id }];
+  const shares = sharesOf(state, entry);
+  state.history = state.history.filter((h) => h !== entry && !shares.includes(h));
+  const ops = [entry, ...shares].map((h) => ({ kind: 'completion', op: 'delete', value: h.id }));
   // Ältere lokale Daten haben den Startwert direkt verändert – zurücksetzen.
   const task = state.tasks.find((t) => t.id === entry.taskId);
   if (task && 'prevLastDone' in entry && task.lastDone === entry.date) {
@@ -243,6 +244,27 @@ function removeCompletion(state, entry) {
     }
   }
   push(state, ops);
+}
+
+// ---------- Zusammen erledigt ----------
+// Die Mithelfenden bekommen je einen eigenen Eintrag „👥 …“ mit ihrem Anteil;
+// die Kennung hängt am Haupteintrag (<id>~<person>), damit Rückgängig alles mitnimmt.
+
+export const isShare = (h) => typeof h.id === 'string' && h.id.includes('~') && !h.taskId;
+export const sharesOf = (state, entry) => state.history.filter((h) => h.id.startsWith(`${entry.id}~`));
+
+export function shareEntry(state, entry, partners, title) {
+  if (!entry || isShare(entry) || sharesOf(state, entry).length) return [];
+  const others = [...new Set(partners)].filter((p) => p && p !== entry.member);
+  if (!others.length) return [];
+  const each = Math.floor(entry.points / (others.length + 1));
+  entry.points -= each * others.length;
+  const shares = others.map((p) => ({
+    id: `${entry.id}~${p}`, taskId: null, title: `👥 ${title}`.slice(0, 120), date: entry.date, member: p, points: each,
+  }));
+  state.history.push(...shares);
+  push(state, [entry, ...shares].map((h) => ({ kind: 'completion', op: 'upsert', value: h })));
+  return shares;
 }
 
 // ---------- Zugeschickte Aufgaben ----------
