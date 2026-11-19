@@ -12,14 +12,25 @@ export const ROOMS = [
   { id: 'kueche', name: 'Küche', emoji: '🍳' },
   { id: 'schlafzimmer', name: 'Elternschlafzimmer', emoji: '🛏️' },
   { id: 'terrasse', name: 'Terrasse', emoji: '🌿' },
+  // Weitere Räume zur Auswahl für neue Familien (bestehende Familien haben sie zunächst nicht)
+  { id: 'kind3', name: 'Kinderzimmer 3', emoji: '🧸' },
+  { id: 'bad2', name: 'Zweites Bad', emoji: '🚿' },
+  { id: 'esszimmer', name: 'Esszimmer', emoji: '🍽️' },
+  { id: 'arbeitszimmer', name: 'Arbeitszimmer', emoji: '💻' },
+  { id: 'balkon', name: 'Balkon', emoji: '🌱' },
+  { id: 'garten', name: 'Garten', emoji: '🌳' },
+  { id: 'keller', name: 'Keller', emoji: '📦' },
+  { id: 'waschkueche', name: 'Waschküche', emoji: '🧺' },
 ];
+export const EXTRA_ROOMS = ['kind3', 'bad2', 'esszimmer', 'arbeitszimmer', 'balkon', 'garten', 'keller', 'waschkueche'];
 
 // Räume für die tägliche Raum-Runde (Terrasse hat den eigenen Hunde-Check).
-export const ROUND_ROOMS = ['treppenhaus', 'flur', 'bad', 'wc', 'kind1', 'kind2', 'wohnzimmer', 'kueche', 'schlafzimmer'];
+// Neue Räume stehen hinten, damit sich die Reihenfolge für bestehende Familien nicht verschiebt.
+export const ROUND_ROOMS = ['treppenhaus', 'flur', 'bad', 'wc', 'kind1', 'kind2', 'wohnzimmer', 'kueche', 'schlafzimmer', 'kind3', 'bad2', 'esszimmer', 'arbeitszimmer'];
 // Fokus-Raum-Rotation: jede Woche ein anderer Raum gründlich.
-export const FOCUS_ROOMS = [...ROUND_ROOMS, 'terrasse'];
+export const FOCUS_ROOMS = [...ROUND_ROOMS.slice(0, 9), 'terrasse', ...ROUND_ROOMS.slice(9), 'balkon', 'garten', 'keller', 'waschkueche'];
 // Diese Räume sind von Anfang an privat (gehören einer Person) – siehe Raum-Besitz in den Einstellungen.
-export const DEFAULT_PRIVATE = ['kind1', 'kind2', 'schlafzimmer'];
+export const DEFAULT_PRIVATE = ['kind1', 'kind2', 'schlafzimmer', 'kind3'];
 
 // Unbeliebtheit 1–5 → Punkte. Die fiesen Aufgaben lohnen sich richtig.
 export const POINTS = { 1: 5, 2: 10, 3: 20, 4: 35, 5: 50 };
@@ -120,7 +131,51 @@ const CATALOG = [
   ['schlafzimmer', 'Matratze drehen', 90, 3],
   ['schlafzimmer', 'Kleiderschrank ausmisten', 180, 3],
 
-  ...['kind1', 'kind2'].flatMap((room) => [
+  ['bad2', 'Toilette putzen', 7, 3],
+  ['bad2', 'Waschbecken & Armaturen', 7, 2],
+  ['bad2', 'Dusche/Wanne putzen', 7, 3],
+  ['bad2', 'Spiegel putzen', 14, 1],
+  ['bad2', 'Handtücher wechseln', 7, 1],
+  ['bad2', 'Boden wischen', 7, 2],
+  ['bad2', 'Fliesen abwischen', 30, 3],
+  ['bad2', 'Abfluss reinigen', 30, 4],
+
+  ['esszimmer', 'Tisch abwischen', 3, 1],
+  ['esszimmer', 'Staubsaugen', 7, 2],
+  ['esszimmer', 'Staub wischen', 14, 2],
+  ['esszimmer', 'Stühle abwischen', 30, 2],
+  ['esszimmer', 'Boden wischen', 14, 3],
+  ['esszimmer', 'Fenster putzen', 42, 4],
+
+  ['arbeitszimmer', 'Schreibtisch aufräumen', 7, 2],
+  ['arbeitszimmer', 'Staubsaugen', 7, 2],
+  ['arbeitszimmer', 'Staub wischen', 14, 2],
+  ['arbeitszimmer', 'Papierkram sortieren', 30, 3],
+  ['arbeitszimmer', 'Tastatur & Bildschirm abwischen', 30, 1],
+  ['arbeitszimmer', 'Fenster putzen', 42, 4],
+
+  ['balkon', 'Balkon fegen', 7, 2],
+  ['balkon', 'Pflanzen gießen', 3, 1],
+  ['balkon', 'Geländer abwischen', 30, 2],
+  ['balkon', 'Balkonmöbel abwischen', 30, 2],
+  ['balkon', 'Balkon schrubben', 90, 4],
+
+  ['garten', 'Pflanzen gießen', 3, 1],
+  ['garten', 'Rasen mähen', 14, 3],
+  ['garten', 'Unkraut jäten', 14, 4],
+  ['garten', 'Laub rechen', 14, 3],
+  ['garten', 'Hecke schneiden', 90, 4],
+
+  ['keller', 'Boden fegen', 30, 2],
+  ['keller', 'Spinnweben entfernen', 60, 2],
+  ['keller', 'Ausmisten', 180, 4],
+
+  ['waschkueche', 'Flusensieb vom Trockner leeren', 7, 1],
+  ['waschkueche', 'Boden wischen', 14, 2],
+  ['waschkueche', 'Waschmaschine reinigen', 30, 3],
+  ['waschkueche', 'Waschmittelfach säubern', 30, 2],
+
+  ...['kind1', 'kind2', 'kind3'].flatMap((room) => [
     [room, 'Aufräumen', 3, 2],
     [room, 'Staubsaugen', 7, 2],
     [room, 'Bettwäsche wechseln', 14, 2],
@@ -264,6 +319,7 @@ export function buildPlan(tasks, key, privateRooms = []) {
   // Hunde-Check immer, dazu kurze Terrassenaufgaben, die fällig sind.
   const hunde = take(
     tasks
+      .filter((t) => !privateRooms.includes(t.room))
       .filter((t) => t.id === HUNDE_CHECK || (t.room === 'terrasse' && t.interval <= 7 && dueRatio(t, key) >= 1))
       .sort((a, b) => (b.id === HUNDE_CHECK) - (a.id === HUNDE_CHECK) || urgent(a, b)),
   );

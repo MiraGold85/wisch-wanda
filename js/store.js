@@ -1,6 +1,6 @@
 // Datenhaltung: alles liegt lokal auf dem Gerät. Ist die Familie verbunden,
 // wird jede Änderung zusätzlich als „Op“ an den Sync weitergereicht.
-import { ROOMS, POINTS, DEFAULT_PRIVATE, RETIRED_TASKS, defaultTasks, buildPlan, dateKey, addDays, dayNum, spreadLastDone } from './planner.js';
+import { ROOMS, EXTRA_ROOMS, POINTS, DEFAULT_PRIVATE, RETIRED_TASKS, defaultTasks, buildPlan, dateKey, addDays, dayNum, spreadLastDone } from './planner.js';
 import { WASTE_POINTS, wasteDone } from './waste.js';
 import { MILESTONES, milestoneTitle, personalStreak, isClaim } from './rewards.js';
 
@@ -102,15 +102,56 @@ export function roomOwners(state, id) {
   return (Array.isArray(o) ? o : [o]).filter((mid) => state.members.some((m) => m.id === mid));
 }
 
-export const privateRooms = (state) => ROOMS.map((r) => r.id).filter((id) => isPrivateRoom(state, id));
+// Räume, die es bei der Familie nicht gibt. Ohne eigene Auswahl: die später dazugekommenen Räume.
+export const isRoomOff = (state, id) => id !== 'alltag' && (state.roomsOff ?? EXTRA_ROOMS).includes(id);
+export const activeRooms = (state) => ROOMS.filter((r) => !isRoomOff(state, r.id));
+export const privateRooms = (state) => ROOMS.map((r) => r.id).filter((id) => !isRoomOff(state, id) && isPrivateRoom(state, id));
 export const isPaused = (state, id) => Boolean(state.pausedRooms?.[id]);
-// Nicht in der gemeinsamen Planung: private und pausierte Räume
-export const excludedRooms = (state) => ROOMS.map((r) => r.id).filter((id) => isPrivateRoom(state, id) || isPaused(state, id));
+// Nicht in der gemeinsamen Planung: private, pausierte und nicht vorhandene Räume
+export const excludedRooms = (state) => ROOMS.map((r) => r.id)
+  .filter((id) => isRoomOff(state, id) || isPrivateRoom(state, id) || isPaused(state, id));
 export const ownedRooms = (state, memberId) => privateRooms(state).filter((id) => !isPaused(state, id) && roomOwners(state, id).includes(memberId));
 // Private Räume, die noch niemandem gehören
 export const unassignedPrivateRooms = (state) => privateRooms(state).filter((id) => !isPaused(state, id) && !roomOwners(state, id).length);
 
-const householdValue = (state) => ({ roomNames: state.roomNames, goal: state.goal, roomOwners: state.roomOwners, pausedRooms: state.pausedRooms });
+const householdValue = (state) => ({
+  roomNames: state.roomNames, goal: state.goal, roomOwners: state.roomOwners, pausedRooms: state.pausedRooms, roomsOff: state.roomsOff,
+});
+
+// Hunde-Aufgaben – ohne Hund werden sie bei der Einrichtung weggelassen.
+const DOG_TASK = /hunde(?!haare)/;
+
+// Einrichtung einer neuen Familie: welche Räume es gibt und ob ein Hund dazugehört.
+export function setupRooms(state, rooms, dog) {
+  state.roomsOff = ROOMS.map((r) => r.id).filter((id) => id !== 'alltag' && !rooms.includes(id));
+  if (!dog) {
+    state.tasks = state.tasks.filter((t) => !DOG_TASK.test(t.id));
+    for (const t of state.tasks) t.name = t.name.replace(/\s*\(Hundehaare!\)/, '');
+  }
+  state.plans = {};
+  save(state);
+}
+
+// Raum dazunehmen oder entfernen. Fehlen die Aufgaben (Raum kam später dazu), kommen sie aus dem Katalog.
+export function setRoomOff(state, id, off) {
+  const key = dateKey();
+  const ops = [];
+  const now = state.roomsOff ?? EXTRA_ROOMS;
+  state.roomsOff = off ? [...new Set([...now, id])] : now.filter((x) => x !== id);
+  if (!off && !state.tasks.some((t) => t.room === id)) {
+    const dog = state.tasks.some((t) => DOG_TASK.test(t.id));
+    for (const t of defaultTasks(key).filter((x) => x.room === id && (dog || !DOG_TASK.test(x.id)))) {
+      state.tasks.push(t);
+      ops.push({ kind: 'task', op: 'upsert', value: t });
+    }
+  }
+  state.plans[key] = buildPlan(effectiveTasks(state), key, excludedRooms(state));
+  push(state, [
+    { kind: 'household', op: 'update', value: householdValue(state) },
+    ...ops,
+    { kind: 'plan', op: 'upsert', value: state.plans[key] },
+  ]);
+}
 
 // Raum pausieren (z. B. Renovierung) oder wieder aktivieren. Beim Aktivieren starten die
 // Aufgaben frisch – über ihr Intervall verteilt, damit nicht alles auf einmal überfällig ist.

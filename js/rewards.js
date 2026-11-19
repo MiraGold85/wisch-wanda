@@ -1,5 +1,5 @@
 // Belohnungen: persönliche Serie mit Bonuspunkten und Abzeichen.
-import { ROOMS, HUNDE_CHECK, DEFAULT_PRIVATE, computeStreak } from './planner.js';
+import { ROOMS, EXTRA_ROOMS, HUNDE_CHECK, DEFAULT_PRIVATE, computeStreak } from './planner.js';
 
 // Bonuspunkte sind Einträge ohne Aufgabe, deren Titel mit 🔥 beginnt.
 export const isBonus = (h) => !h.taskId && typeof h.title === 'string' && h.title.startsWith('🔥 ');
@@ -28,7 +28,7 @@ export function nextMilestone(streak) {
 // Räume, die für „Rundum sauber“ zählen: gemeinsame plus die eigenen privaten
 function roomsFor(state, memberId) {
   return ROOMS.map((r) => r.id).filter((id) => {
-    if (id === 'alltag' || state.pausedRooms?.[id]) return false;
+    if (id === 'alltag' || state.pausedRooms?.[id] || (state.roomsOff ?? EXTRA_ROOMS).includes(id)) return false;
     const o = state.roomOwners?.[id];
     const isPrivate = o === undefined ? DEFAULT_PRIVATE.includes(id) : o !== 'shared';
     return !isPrivate || [].concat(o ?? []).includes(memberId);

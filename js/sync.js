@@ -58,12 +58,15 @@ const SPECS = {
 };
 
 // Raum-Besitz und Pausen liegen mit in room_names („__owners“, „__paused“), damit keine neue Spalte nötig ist.
-const packRooms = ({ roomNames, roomOwners, pausedRooms }) => ({ ...roomNames, __owners: roomOwners || {}, __paused: pausedRooms || {} });
-function unpackRooms(s, raw) {
-  const { __owners: owners, __paused: paused, ...names } = raw || {};
+export const packRooms = ({ roomNames, roomOwners, pausedRooms, roomsOff }) => ({
+  ...roomNames, __owners: roomOwners || {}, __paused: pausedRooms || {}, ...(roomsOff ? { __off: roomsOff } : {}),
+});
+export function unpackRooms(s, raw) {
+  const { __owners: owners, __paused: paused, __off: off, ...names } = raw || {};
   s.roomNames = names;
   if (owners) s.roomOwners = owners;
   if (paused) s.pausedRooms = paused;
+  if (off) s.roomsOff = off;
 }
 
 let ctx = null; // { getState, onChange(event), onStatus(status) }
@@ -488,7 +491,7 @@ export async function createFamily(name) {
   // Alles Bisherige hochladen.
   const today = dateKey();
   s.outbox = [
-    { kind: 'household', op: 'update', value: { roomNames: s.roomNames, goal: s.goal, roomOwners: s.roomOwners, pausedRooms: s.pausedRooms } },
+    { kind: 'household', op: 'update', value: { roomNames: s.roomNames, goal: s.goal, roomOwners: s.roomOwners, pausedRooms: s.pausedRooms, roomsOff: s.roomsOff } },
     { kind: 'member', op: 'upsert', value: s.members },
     { kind: 'task', op: 'upsert', value: s.tasks },
     ...(s.history.length ? [{ kind: 'completion', op: 'upsert', value: dedupeCompletions(s.history) }] : []),

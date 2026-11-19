@@ -190,3 +190,32 @@ test('Zusammen erledigt: Punkte werden aufgeteilt, Rückgängig nimmt alles mit'
   assert.equal(memberPoints(state, 'papa'), 3);
   assert.ok(!state.history.some((h) => h.id.startsWith(`${entry.id}~`)));
 });
+
+test('Neue Familie wählt ihre Räume; bestehende Familien bekommen keine neuen Räume', async () => {
+  const { setupRooms, setRoomOff, isRoomOff, activeRooms, excludedRooms, unassignedPrivateRooms } = await import('../js/store.js');
+  const { buildPlan, dateKey, HUNDE_CHECK } = await import('../js/planner.js');
+  // bestehend: ohne Auswahl sind die neuen Räume aus
+  const old = setup().state;
+  assert.ok(isRoomOff(old, 'garten') && !isRoomOff(old, 'terrasse'));
+  assert.deepEqual(unassignedPrivateRooms(old), ['kind1', 'kind2', 'schlafzimmer'], 'kein „Kinderzimmer 3“ bei bestehenden Familien');
+  // neu: Wohnung ohne Treppenhaus/Terrasse, mit Balkon, ohne Hund
+  const { state } = setup();
+  setupRooms(state, ['flur', 'bad', 'kind1', 'wohnzimmer', 'kueche', 'schlafzimmer', 'balkon'], false);
+  assert.deepEqual(activeRooms(state).map((r) => r.id), ['alltag', 'flur', 'bad', 'kind1', 'wohnzimmer', 'kueche', 'schlafzimmer', 'balkon']);
+  assert.ok(!state.tasks.some((t) => /hunde(?!haare)/.test(t.id)), 'ohne Hund keine Hunde-Aufgaben');
+  assert.ok(state.tasks.some((t) => t.name === 'Sofa absaugen'));
+  const plan = buildPlan(state.tasks, TODAY, excludedRooms(state));
+  assert.equal(plan.hunde.length, 0);
+  assert.ok(plan.rounds.every((r) => ['flur', 'bad', 'wohnzimmer', 'kueche'].includes(r.room)));
+  // später Garten dazu, Flur weg
+  setRoomOff(state, 'garten', false);
+  setRoomOff(state, 'flur', true);
+  assert.ok(!isRoomOff(state, 'garten') && isRoomOff(state, 'flur'));
+  const p2 = state.plans[dateKey()];
+  assert.ok(p2.rounds.every((r) => r.room !== 'flur'));
+  // bestehende Familie nimmt Garten dazu → Aufgaben kommen aus dem Katalog
+  old.tasks = old.tasks.filter((t) => t.room !== 'garten');
+  setRoomOff(old, 'garten', false);
+  assert.ok(old.tasks.some((t) => t.id === 'garten-rasen-maehen'));
+  assert.ok(old.tasks.some((t) => t.id === HUNDE_CHECK));
+});

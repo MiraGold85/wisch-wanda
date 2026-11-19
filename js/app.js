@@ -1,5 +1,5 @@
 import {
-  ROOMS, EFFORT_LABELS, POINTS, HUNDE_CHECK, dateKey, addDays, dueRatio, daysUntilDue, pointsFor,
+  ROOMS, EXTRA_ROOMS, EFFORT_LABELS, POINTS, HUNDE_CHECK, dateKey, addDays, dueRatio, daysUntilDue, pointsFor,
   roomStatus, quickPlan, planTaskIds, computeStreak, levelFor, slug, MAX_JOKERS, privateTasks, TASK_HINTS, RETIRED_TASKS,
 } from './planner.js';
 import {
@@ -8,7 +8,7 @@ import {
   saveMember, removeMember, saveTask, removeTask, saveSettings, setWaste, toggleWaste,
   syncStreakBonus, toggleClaim, claimOf, cleanupClaims, setAssignmentPhoto,
   isPrivateRoom, roomOwners, privateRooms, ownedRooms, unassignedPrivateRooms, toggleRoomOwner,
-  isPaused, excludedRooms, setRoomPaused, upgradeAlltag,
+  isPaused, excludedRooms, setRoomPaused, upgradeAlltag, activeRooms, isRoomOff, setRoomOff, setupRooms,
   awaitingReview, approveAssignment, rejectAssignment, shareEntry, sharesOf, isShare,
 } from './store.js';
 import { personalStreak, nextMilestone, badgesFor, isClaim, isBonus } from './rewards.js';
@@ -17,7 +17,7 @@ import * as sync from './sync.js';
 import { pushSupport, enablePush, updatePush, disablePush, testPush } from './push.js';
 
 // Bei jeder Veröffentlichung zusammen mit CACHE in sw.js erhöhen.
-const APP_VERSION = 26;
+const APP_VERSION = 27;
 
 let state = load();
 let tab = 'heute';
@@ -719,7 +719,9 @@ function viewToday() {
   }
   if (plan.hunde.length) {
     cards.push(section({
-      icon: '🐾', title: 'Terrasse & Hunde', meta: 'kurz nachsehen, bevor jemand reintritt',
+      ...(task(HUNDE_CHECK)
+        ? { icon: '🐾', title: `${esc(roomName(state, 'terrasse'))} & Hunde`, meta: 'kurz nachsehen, bevor jemand reintritt' }
+        : { icon: '🌿', title: esc(roomName(state, 'terrasse')), meta: 'kurz nach draußen schauen' }),
       body: plan.hunde.map(row).join(''),
     }));
   }
@@ -757,7 +759,7 @@ function viewRooms() {
   const focus = planFor(state, key).focusRoom;
   const tasks = effectiveTasks(state);
   const visible = (id) => !isPrivateRoom(state, id) || roomOwners(state, id).includes(me().id);
-  const roomCards = ROOMS.map((r) => {
+  const roomCards = activeRooms(state).map((r) => {
     if (isPaused(state, r.id)) {
       return `
       <section class="card room private paused">
@@ -794,7 +796,7 @@ function viewRooms() {
         ${open ? `<div class="room-tasks">${list.map((t) => taskRow(t.id, { due: t, send: state.members.length > 1 && !mine })).join('')}</div>` : ''}
       </section>`;
   });
-  const shown = ROOMS.filter((r) => visible(r.id) && !isPaused(state, r.id));
+  const shown = activeRooms(state).filter((r) => visible(r.id) && !isPaused(state, r.id));
   const green = shown.filter((r) => roomStatus(tasks, r.id, key).level === 'green').length;
   return `
     <section class="hero slim">
@@ -1078,7 +1080,7 @@ function viewSettings() {
       ${state.members.length > 1 ? `<button class="icon-btn" data-remove-member="${esc(m.id)}" aria-label="Entfernen">✕</button>` : ''}
     </div>`).join('');
 
-  const roomsEdit = ROOMS.filter((r) => r.id !== 'alltag').map((r) => `
+  const roomsEdit = activeRooms(state).filter((r) => r.id !== 'alltag').map((r) => `
     <div class="room-edit">
       <div class="row"><span class="row-emoji">${r.emoji}</span>
         <input type="text" maxlength="40" value="${esc(roomName(state, r.id))}" data-room-name="${r.id}" aria-label="Raumname"></div>
@@ -1089,9 +1091,9 @@ function viewSettings() {
     </div>`).join('');
 
   const effortOpts = (sel) => Object.entries(EFFORT_LABELS).map(([v, l]) => `<option value="${v}" ${+v === sel ? 'selected' : ''}>${l}</option>`).join('');
-  const roomOpts = (sel) => ROOMS.map((r) => `<option value="${r.id}" ${r.id === sel ? 'selected' : ''}>${r.emoji} ${esc(roomName(state, r.id))}</option>`).join('');
+  const roomOpts = (sel) => activeRooms(state).map((r) => `<option value="${r.id}" ${r.id === sel ? 'selected' : ''}>${r.emoji} ${esc(roomName(state, r.id))}</option>`).join('');
 
-  const tasksEdit = ROOMS.map((r) => {
+  const tasksEdit = activeRooms(state).map((r) => {
     const list = state.tasks.filter((t) => t.room === r.id);
     return `
       <details class="task-group">
@@ -1132,6 +1134,12 @@ function viewSettings() {
         <div class="row"><label>bei <input type="number" min="50" step="50" value="${state.goal.points}" data-goal="points"> Punkten</label></div>
         <label class="check-line"><input type="checkbox" data-goal="loserPays" ${state.goal.loserPays !== false ? 'checked' : ''}> 🍕 Wer am wenigsten beiträgt, spendiert die Belohnung</label>
         <button class="btn ghost" data-action="new-goal">Ziel neu starten (Punkte ab heute zählen)</button>`,
+    })}
+    ${section({
+      icon: '🏡', title: 'Welche Räume habt ihr?',
+      meta: 'Antippen zum Dazunehmen oder Entfernen. Entfernte Räume tauchen nirgends mehr auf; ihre Aufgaben bleiben gespeichert.',
+      body: `<div class="owner-chips">${ROOMS.filter((r) => r.id !== 'alltag').map((r) => `
+        <button class="owner-chip ${isRoomOff(state, r.id) ? '' : 'active'}" data-room-off="${r.id}">${r.emoji} ${esc(roomName(state, r.id))}</button>`).join('')}</div>`,
     })}
     ${section({ icon: '🏠', title: 'Räume', meta: 'Name und wem der Raum gehört. 🔒 Private Räume sind nicht in der gemeinsamen Runde – nur die Besitzerin bekommt sie angezeigt. ⏸️ Pausierte Räume (z. B. bei Renovierung) tauchen nirgends auf.', body: roomsEdit })}
     ${section({
@@ -1256,6 +1264,12 @@ function renderOnboarding() {
           <select name="emoji${i}">${MEMBER_EMOJIS.map((e, j) => `<option ${j === i ? 'selected' : ''}>${e}</option>`).join('')}</select>
           <input type="text" maxlength="40" name="name${i}" placeholder="${i === 0 ? 'Dein Name' : 'Name'}" value="${i === 0 ? 'Mama' : ''}">
         </div>`).join('')}
+      <h3>Welche Räume habt ihr?</h3>
+      <p class="hint">Antippen zum An- und Abwählen. Namen und Räume könnt ihr später in den Einstellungen ändern.</p>
+      <div class="row wrap due-chips">${ROOMS.filter((r) => r.id !== 'alltag').map((r) => `
+        <label><input type="checkbox" name="room" value="${r.id}" ${EXTRA_ROOMS.includes(r.id) ? '' : 'checked'}><span>${r.emoji} ${esc(r.name)}</span></label>`).join('')}
+      </div>
+      <label class="check-line"><input type="checkbox" name="dog"> 🐶 Wir haben einen Hund</label>
       <button class="btn big" type="submit">Los geht's! 🧽</button>
     </form>`;
 }
@@ -1263,7 +1277,7 @@ function renderOnboarding() {
 function renderSendSheet() {
   const others = state.members.filter((m) => m.id !== me().id);
   const to = sheet.to || others[0]?.id;
-  const groups = ROOMS.map((r) => `
+  const groups = activeRooms(state).map((r) => `
     <optgroup label="${r.emoji} ${esc(roomName(state, r.id))}">
       ${state.tasks.filter((t) => t.room === r.id).map((t) => `<option value="${esc(t.id)}" ${t.id === sheet.taskId ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
     </optgroup>`).join('');
@@ -1605,7 +1619,7 @@ document.addEventListener('click', () => setTimeout(syncBack, 0));
 // ---------- Ereignisse ----------
 
 document.addEventListener('click', (ev) => {
-  const el = ev.target.closest('[data-task],[data-assign],[data-waste],[data-together],[data-pause-room],[data-owner-room],[data-parent-pick],[data-photo],[data-view-photo],[data-member-code],[data-claim],[data-claim-waste],[data-send-waste],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
+  const el = ev.target.closest('[data-task],[data-assign],[data-waste],[data-together],[data-room-off],[data-pause-room],[data-owner-room],[data-parent-pick],[data-photo],[data-view-photo],[data-member-code],[data-claim],[data-claim-waste],[data-send-waste],[data-send],[data-unassign],[data-pick],[data-action],[data-tab],[data-room],[data-member],[data-remove-member],[data-remove-task]');
   if (!el || el.matches('input')) return;
   const d = el.dataset;
   if (d.task) return complete(d.task, ev);
@@ -1664,6 +1678,12 @@ document.addEventListener('click', (ev) => {
     return pickMember(d.pick);
   }
   if (d.together) return toggleTogether(d.together);
+  if (d.roomOff) {
+    const off = !isRoomOff(state, d.roomOff);
+    if (off && !confirm(`${roomName(state, d.roomOff)} entfernen? Der Raum taucht dann nirgends mehr auf. Ihr könnt ihn hier jederzeit wieder dazunehmen.`)) return;
+    setRoomOff(state, d.roomOff, off);
+    return render();
+  }
   if (d.photo) return takePhoto(d.photo);
   if (d.viewPhoto) return openPhoto(state.assignments.find((x) => x.id === d.viewPhoto));
   if (d.parentPick) {
@@ -1982,6 +2002,7 @@ document.addEventListener('submit', async (ev) => {
     if (!members.length) members.push({ id: 'm1', name: 'Ich', emoji: '👩' });
     state.members = members;
     state.currentMember = members[0].id;
+    setupRooms(state, f.getAll('room'), !!f.get('dog'));
     state.onboarded = true;
     save(state);
     renderOverlay();
