@@ -17,7 +17,7 @@ import * as sync from './sync.js';
 import { pushSupport, enablePush, updatePush, disablePush, testPush } from './push.js';
 
 // Bei jeder Veröffentlichung zusammen mit CACHE in sw.js erhöhen.
-const APP_VERSION = 27;
+const APP_VERSION = 28;
 
 let state = load();
 let tab = 'heute';
@@ -1122,7 +1122,7 @@ function viewSettings() {
       icon: '💾', title: 'Sicherung', meta: 'Eine Kopie der Familiendaten herunterladen.',
       body: '<button class="btn ghost" data-action="export">Sicherung herunterladen</button>',
     })}
-    <p class="hint center">Wisch-Wanda · ${esc(me().emoji)} ${esc(me().name)}</p>`;
+    <p class="hint center"><a href="anleitung.html" target="_blank" rel="noopener">📖 Kurzanleitung</a> · Wisch-Wanda · ${esc(me().emoji)} ${esc(me().name)}</p>`;
   }
 
   return `
@@ -1170,7 +1170,7 @@ function viewSettings() {
         </div>
         ${state.sync ? '' : '<button class="btn danger" data-action="reset">Alles zurücksetzen</button>'}`,
     })}
-    <p class="hint center">Wisch-Wanda · Version ${APP_VERSION}</p>`;
+    <p class="hint center"><a href="anleitung.html" target="_blank" rel="noopener">📖 Kurzanleitung</a> · Wisch-Wanda · Version ${APP_VERSION}</p>`;
 }
 
 // ---------- Timer für die Raum-Runde ----------
